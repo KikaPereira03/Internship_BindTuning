@@ -7,17 +7,17 @@
 
 try {
     Write-Host "Navigating to profile page..."
-    $driver.Navigate().GoToUrl($profileUrl)
+    $global:driver.Navigate().GoToUrl($global:socialNetwork.Name.Profile)
 
     Write-Host "Waiting for profile to load..."
     $retryCount = 0
     $isProfileLoaded = $false
     
 
-    while ($retryCount -lt $maxRetries) {
+    while ($retryCount -lt $global:maxRetries) {
         try {
             # Wait for profile name (h1) to be visible
-            $profileNameElement = $driver.FindElementByXPath("//h1[contains(@class, 'inline') and contains(@class, 't-24') and contains(@class, 'v-align-middle')]")
+            $profileNameElement = $global:driver.FindElementByXPath("//h1[contains(@class, 'inline') and contains(@class, 't-24') and contains(@class, 'v-align-middle')]")
 
             if ($profileNameElement.Displayed) {
                 $profileName = $profileNameElement.Text.Trim()
@@ -36,12 +36,12 @@ try {
     }
 
     if (-not $isProfileLoaded) {
-        throw "Profile page did not load after $maxRetries retries!"
+        throw "Profile page did not load after $global:maxRetries retries!"
     }
 }
 catch {
     Write-Host "Failed to load profile page: $_" -ForegroundColor Red
-    $driver.Quit()
+    $global:driver.Quit()
     Exit 1
 }
 
@@ -51,7 +51,7 @@ catch {
 
 try {
     Write-Host "Extracting page content..."
-    $htmlContent = $driver.PageSource
+    $htmlContent = $global:driver.PageSource
 
     # Create profile folder
     $profileFolderPath = Join-Path (Get-Location) $profileName
