@@ -1,10 +1,10 @@
-function Get-ScrappedSection{
+function Get-ScrappedSection {
     param(
         [string]$section,
         [string]$network
     )
 
-    switch($section){
+    switch ($section) {
         "posts" {
             Get-Posts -network $network;
             break
@@ -13,7 +13,7 @@ function Get-ScrappedSection{
             Get-Profile;
             break
         }
-     }
+    }
 }
 
 function Get-Posts {
@@ -179,6 +179,9 @@ function Get-Posts {
     $noChangeCount = 0
 
     # First, check what posts we already have
+    $initialPosts = @()
+    $highestPostSeen = 0
+    
     try {
         $initialPosts = $global:driver.ExecuteScript(@"
 const headers = Array.from(document.querySelectorAll('h2'))
@@ -190,8 +193,6 @@ return headers;
         Write-Host "Initial scan found $($initialPosts.Count) posts:"
     
         # Extract post numbers and find the highest one
-        $highestPostSeen = 0
-    
         foreach ($post in $initialPosts) {
             Write-Host "  - $post"
             if ($post -match "Feed post number (\d+)") {
@@ -217,13 +218,20 @@ return headers;
         $highestPostSeen = 0
     }
 
-    # Now begin scrolling if needed
-    while (-not $targetFound -and $scrollAttempt -lt $maxScrollAttempts -and $noChangeCount -lt 3) {
-        # Perform gentle, incremental scrolling
+    # This code snippet should replace the "Now look for next post in sequence" section
+    # Now look for next post in sequence if we haven't already found post #10
+    if (-not $targetFound) {
+        $targetPostNumber = $highestPostSeen + 1
+        $scrollAttempt = 0  # Reset scroll attempt counter
+        $postFound = $false
+        $noChangeCount = 0  # Reset no change counter
+        $maxCheckAttemptsBeforeScroll = 10  # Number of check attempts before scrolling again
+    
+        Write-Host "Looking for post #$($targetPostNumber)..."
+    
+        # First, scroll to just below the last visible post
         try {
-            Write-Host "Scroll attempt $($scrollAttempt + 1). Performing gentle scroll..."
-        
-            # Find the position of the last visible post
+            # Find position of last visible post
             $lastVisiblePostPosition = $global:driver.ExecuteScript(@"
 const headers = Array.from(document.querySelectorAll('h2'))
               .filter(h => h.textContent.includes('Feed post number'))
@@ -235,97 +243,133 @@ if (headers.length > 0) {
     return 500; // Default if no posts found
 }
 "@)
-        
-            # Scroll just enough to see a bit more content (about 2 posts worth)
-            $global:driver.ExecuteScript("window.scrollBy(0, $lastVisiblePostPosition);")
-            Write-Host "Scrolled to position after the last visible post. Waiting for content to load..."
-            Start-Sleep -Seconds 5
+
+            # Scroll to just below last visible post + extra pixels
+            $scrollAmount = $lastVisiblePostPosition + 100
+            $global:driver.ExecuteScript("window.scrollBy(0, $scrollAmount);")
+            Write-Host "Initial scroll: Scrolled down $scrollAmount pixels to position just below the last visible post. Waiting for content to load..."
+            Start-Sleep -Seconds 20
         }
         catch {
-            Write-Host "Error during scroll attempt: $_"
-            # Fallback to a small scroll if the position-based scroll fails
-            $global:driver.ExecuteScript("window.scrollBy(0, 800);")
-            Write-Host "Performed fallback scroll. Waiting for content to load..."
-            Start-Sleep -Seconds 5
+            # Fallback to a simpler scroll if the position calculation fails
+            $global:driver.ExecuteScript("window.scrollBy(0, 1200);")
+            Write-Host "Initial scroll: Performed fallback scroll of 1200 pixels. Waiting for content to load..."
+            Start-Sleep -Seconds 20
         }
     
-        # Check for new posts after scrolling
-        $foundNewPostsAfterScroll = $false
-        $checkAttempts = 0
-        $maxCheckAttempts = 3
-    
-        while (-not $foundNewPostsAfterScroll -and $checkAttempts -lt $maxCheckAttempts -and -not $targetFound) {
-            try {
-                # Log what post numbers we currently have
-                $currentPosts = $global:driver.ExecuteScript(@"
-const headers = Array.from(document.querySelectorAll('h2'))
-              .filter(h => h.textContent.includes('Feed post number'))
-              .map(h => h.textContent.trim());
-return headers;
-"@)
-            
-                Write-Host "Check attempt $($checkAttempts + 1) after scroll $($scrollAttempt + 1). Found $($currentPosts.Count) posts."
-            
-                # Extract post numbers and find the highest one
-                $postNumbers = @()
-                $currentHighest = $highestPostSeen
-            
-                foreach ($post in $currentPosts) {
-                    if ($post -match "Feed post number (\d+)") {
-                        $number = [int]$matches[1]
-                        $postNumbers += $number
-                        Write-Host "  - $post (Post #$number)"
-                    
-                        if ($number -gt $highestPostSeen) {
-                            $highestPostSeen = $number
-                            $foundNewPostsAfterScroll = $true
-                            Write-Host "  --> New post found: #$number" 
+        while (($targetPostNumber -le 10) -and ($scrollAttempt -lt $maxScrollAttempts) -and ($noChangeCount -lt 3)) {
+            # Try multiple times to find the post before scrolling again
+            $checkAttempt = 0
+            $found = $false
+        
+            while (($checkAttempt -lt $maxCheckAttemptsBeforeScroll) -and (-not $found)) {
+                # Try to find the target post
+                try {
+                    # Search using the third strategy
+                    $allHeaders = $global:driver.FindElementsByTagName("h2") | Where-Object {
+                        $global:driver.ExecuteScript("return arguments[0].offsetParent !== null;", $_)
+                    }                    
+                
+                    foreach ($header in $allHeaders) {
+                        try {
+                            $text = $header.Text
+                            if ($text -match "Feed post number $targetPostNumber") {
+                                $visible = $global:driver.ExecuteScript("return arguments[0].offsetParent !== null;", $header)
+                                if (-not $visible) {
+                                    Write-Host "Found header for post #$targetPostNumber but it is not visible yet."
+                                    continue
+                                }
+                                # Found the target post!
+                                $found = $true
+                                Write-Host "Found post #$($targetPostNumber) on check attempt $($checkAttempt + 1)!"
+                            
+                                # Get the container for this post (reusing ancestry paths)
+                                $postElement = $null
+                                $ancestryPaths = @(
+                                    "./ancestor::div[contains(@class, 'feed-shared-update-v2')]",
+                                    "./ancestor::div[@role='article']",
+                                    "./ancestor::div[contains(@class, 'relative') and contains(@class, 'artdeco-card')]"
+                                )
+                            
+                                foreach ($path in $ancestryPaths) {
+                                    try {
+                                        $postElement = $header.FindElementByXPath($path)
+                                        if ($postElement) {
+                                            Write-Host "Found container for post #$($targetPostNumber)"
+                                            # Add to your collection if needed
+                                            break
+                                        }
+                                    }
+                                    catch {
+                                        # Continue to next path
+                                    }
+                                }
+                            
+                                # Update target and reset counter
+                                $highestPostSeen = $targetPostNumber
+                                $targetPostNumber = $highestPostSeen + 1
+                                $noChangeCount = 0
+                                Write-Host "Now looking for post #$($targetPostNumber)..."
+                            
+                                if ($highestPostSeen -eq 10) {
+                                    $targetFound = $true
+                                    Write-Host "Found target post #10!"
+                                    break
+                                }
+                            
+                                break
+                            }
                         }
-                    
-                        if ($number -eq 10) {
-                            $targetFound = $true
+                        catch {
+                            # Continue checking other headers
                         }
                     }
+                
+                    if (-not $found) {
+                        # Post not found this attempt
+                        $checkAttempt++
+                        Write-Host "Check attempt $($checkAttempt)/$($maxCheckAttemptsBeforeScroll): Post #$($targetPostNumber) not found yet..."
+                        Start-Sleep -Seconds 20
+                    }
+                }
+                catch {
+                    Write-Host "Error while checking for post #$($targetPostNumber): $_"
+                    $checkAttempt++
+                    Start-Sleep -Seconds 20
+                }
+            }
+        
+            # If we still haven't found the post after all check attempts, scroll more
+            if (-not $found) {
+                Write-Host "Post #$($targetPostNumber) not found after $maxCheckAttemptsBeforeScroll check attempts. Scrolling more..."
+            
+                # Scroll more aggressively each time
+                try {
+                    $scrollDistance = 1000 + ($scrollAttempt * 300)  # Increase scroll distance each attempt
+                    $global:driver.ExecuteScript("window.scrollBy(0, $scrollDistance);")
+                    Write-Host "Scrolled down $scrollDistance pixels. Waiting for content to load..."
+                    Start-Sleep -Seconds 20
+                }
+                catch {
+                    Write-Host "Error during scroll: $_"
                 }
             
-                if ($foundNewPostsAfterScroll) {
-                    Write-Host "New posts found! Previous highest: #$currentHighest, New highest: #$highestPostSeen"
-                    break  # Exit the check loop since we found new posts
-                }
-                else {
-                    Write-Host "No new posts found on check attempt $($checkAttempts + 1). Waiting more time..."
-                    Start-Sleep -Seconds 5  # Wait 5 more seconds and check again
+                $noChangeCount++
+                $scrollAttempt++
+            
+                if ($noChangeCount -ge 3) {
+                    Write-Host "No new posts found after 3 scroll attempts. Stopping search."
                 }
             }
-            catch {
-                Write-Host "Error during check attempt $($checkAttempts + 1): $_"
-            }
-        
-            $checkAttempts++
         }
     
-        if ($targetFound) {
-            Write-Host "Found Feed post number 10! Stopping scrolling."
-            break
-        }
-    
-        # Check if we've gotten any new posts after all our check attempts
-        if (-not $foundNewPostsAfterScroll) {
-            $noChangeCount++
-            Write-Host "No new posts found after $maxCheckAttempts checks. Stale count: $noChangeCount"
-        
-            if ($noChangeCount -ge 3) {
-                Write-Host "Max stale scrolls reached. Stopping."
-                break
-            }
+        if ($highestPostSeen -ge 10) {
+            Write-Host "Successfully found at least 10 posts!"
         }
         else {
-            $noChangeCount = 0  # Reset if we found new posts
+            Write-Host "Found $highestPostSeen posts before stopping."
         }
-    
-        $scrollAttempt++
     }
-
     # After either finding post #10 or reaching max scroll attempts, save the full HTML
     Write-Host "Saving full page HTML..."
 

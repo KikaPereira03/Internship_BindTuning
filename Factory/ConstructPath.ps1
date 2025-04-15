@@ -50,8 +50,17 @@ function Get-LinkedInDataPath {
         [DateTime]$date = (Get-Date)
     )
     
-    # Convert the profile URL to a person name
-    $personName = Get-PersonNameFromProfile -profileUrl $profileUrl
+    # Extract the actual name from the page
+    try {
+        $nameElement = $global:driver.FindElementByXPath("//h3[contains(@class, 't-bold')]")
+        $profileName = $nameElement.Text.Trim()
+        $personName = $profileName -replace '[\\/:*?"<>|]', ''  # sanitize for folder name
+        Write-Host "Extracted name from page: $personName"
+    } catch {
+        Write-Host "Failed to extract name from page. Falling back to URL..."
+        $personName = Get-PersonNameFromProfile -profileUrl $profileUrl
+    }
+
     
     # Format the date
     $dateStr = $date.ToString("yyyy-MM-dd_HH-mm")
