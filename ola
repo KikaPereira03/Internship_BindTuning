@@ -1,20 +1,38 @@
-
-function Format-NameAsFolder {
-    param ([string]$name)
-
-    $nameParts = $name -split " "
-    $folderNameParts = @()
-    foreach ($part in $nameParts) {
-        if ($part.Length -gt 0) {
-            $capitalizedPart = (Get-Culture).TextInfo.ToTitleCase($part)
-            $folderNameParts += $capitalizedPart
+function Get-PersonNameFromProfile {
+    param (
+        [string]$profileUrl
+    )
+    
+    
+    # Extract the name from the URL
+    if ($profileUrl -match "in/([^/]+)/") {
+        $personSlug = $matches[1]
+        Write-Host "Found person slug: $personSlug"
+        
+        $nameParts = $personSlug -split "-"
+        $folderNameParts = @()
+        foreach ($part in $nameParts) {
+            if ($part.Length -gt 0) {
+                $capitalizedPart = (Get-Culture).TextInfo.ToTitleCase($part)
+                $folderNameParts += $capitalizedPart
+            }
         }
+        
+        # Join parts with spaces
+        $folderName = $folderNameParts -join " "
+        
+        Write-Host "Person folder name: $folderName"
+        return $folderName
+    } else {
+        # Default folder name if pattern not found
+        $folderName = "Unknown Person"
+        Write-Host "Could not extract name from profile URL, using default: $folderName"
+        return $folderName
     }
-
-    return ($folderNameParts -join " ")
 }
 
-function Get-LinkedInDataPath {
+# Create the full path
+#function Get-LinkedInDataPath {
     param (
         [Parameter(Mandatory=$true)]
         [string]$profileUrl,
@@ -32,12 +50,17 @@ function Get-LinkedInDataPath {
         [DateTime]$date = (Get-Date)
     )
     
-    if (-not $global:personName) {
-        Write-Host "Warning: Person name not found from page. Using fallback value..."
-        $global:personName = "Unknown Person"
+    # Extract the actual name from the page
+    try {
+        # Use the exact XPath you provided, but remove the text() node since Selenium needs the element
+        $nameElement = $global:driver.FindElementByXPath('//*[@id="ember3883"]/h3')
+        $profileName = $nameElement.Text.Trim()
+        $personName = $profileName -replace '[\\/:*?"<>|]', '' 
+        Write-Host "Extracted name from page: $personName"
+    } catch {
+        Write-Host "Failed to extract name from page. Falling back to URL..."
+        $personName = Get-PersonNameFromProfile -profileUrl $profileUrl
     }
-    
-    $folderName = Format-NameAsFolder -name $global:personName
 
     # Format the date
     $dateStr = $date.ToString("yyyy-MM-dd_HH-mm")
@@ -50,9 +73,9 @@ function Get-LinkedInDataPath {
     }
     
     # Create person folder
-    $personPath = Join-Path $basePath $folderName
+    $personPath = Join-Path $basePath $personName
     if (-not (Test-Path $personPath)) {
-        Write-Host "Creating person folder: $folderName"
+        Write-Host "Creating person folder: $personName"
         New-Item -ItemType Directory -Path $personPath -Force | Out-Null
     }
     
