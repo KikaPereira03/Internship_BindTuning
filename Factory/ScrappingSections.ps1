@@ -26,25 +26,14 @@ function Get-Posts {
     #Variables
     $postsUrl = $global:socialNetwork.Profile + "recent-activity/all/"
 
-    $retryCount = 0
     $pageLoaded = $false
-    $feedPostHeaders = @()
     $postElements = @()
-    $htmlOutput = ""
     $limit = 10
-    $fullHtml = ""
-    $initialPosts = @()
     $highestPostSeen = 0
     $targetFound = $false
-    $maxScrollAttempts = 15
-    $scrollAttempt = 0
-    $noChangeCount = 0
+    $maxScrollAttempts = 10
     $maxCheckAttemptsBeforeScroll = 10
-    $targetPostNumber = 0
     $found = $false
-    $lastVisiblePostPosition = 0
-    $scrollDistance = 0
-    $resultMessage = ""
 
 
     Write-Host "Navigating to posts page: $postsUrl"
@@ -52,37 +41,65 @@ function Get-Posts {
     try {
         $global:driver.Navigate().GoToUrl($postsUrl)
         Start-Sleep -Seconds 2
-
+    
         $retryCount = 0
         $pageLoaded = $false
-
+        $noPosts = $false
+    
         while ($retryCount -lt $global:maxRetries) {
             try {
-                # Wait for at least one post inside the scroll container
+                # First check if the page has loaded with the empty state message
+                try {
+                    $emptyContainer = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__empty')]")
+                    if ($emptyContainer -and $emptyContainer.Displayed) {
+                        $pageLoaded = $true
+                        $noPosts = $true
+                        Write-Host "Posts page loaded, but no posts are available." -ForegroundColor Yellow
+                        break
+                    }
+                } catch {
+                    # No empty state found, continue checking for posts
+                }
+                
+                # Check for posts if no empty state was found
                 $postItem = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__content')]//ul/li")
-
                 if ($postItem.Displayed) {
                     $pageLoaded = $true
+                    Write-Host "Posts found on the page." -ForegroundColor Green
                     break
                 }
             }
             catch {
                 Write-Host "Retry $($retryCount + 1): Posts content not yet loaded..."
             }
-
+    
             Start-Sleep -Seconds 2
             $retryCount++
         }
-
+    
         if ($pageLoaded) {
             Write-Host "Posts page loaded successfully." -ForegroundColor Green
+            
+            # Use the Get-FolderPath function regardless of whether there are posts
+            $paths = Get-FolderPath -driver $driver -baseFolder "_logs" -category "Activity"
+            $categoryFolderPath = $paths.CategoryPath
+            $postsHtmlPath = $paths.FilePath
+            
+            # If no posts were found, create a file with the empty state message
+            if ($noPosts) {
+                Write-Host "No posts found for this profile." -ForegroundColor Yellow
+                $noPostsHtml = "<html><head><meta charset='UTF-8'><title>No Posts Found</title></head><body><h1>Nothing to see for now</h1><p>This profile has no activity posts.</p></body></html>"
+                $noPostsHtml | Out-File $postsHtmlPath -Encoding UTF8
+                Write-Host "Created empty posts file at: $postsHtmlPath"
+            
+                return
+            }
         } else {
-            Write-Host "Error: Could not confirm that the posts page loaded."
+            Write-Host "Error: Could not confirm that the posts page loaded." -ForegroundColor Red
             return
         }
-
     } catch {
-        Write-Host "Error navigating to the posts page: $_"
+        Write-Host "Error navigating to the posts page: $_" -ForegroundColor Red
         return
     }
 
@@ -324,7 +341,7 @@ function Get-Posts {
     Write-Host "Saving the full page HTML..." 
     $fullHtml = $global:driver.PageSource
     $fullHtml | Out-File $postsHtmlPath -Encoding UTF8
-    Write-Host "Successfully saved the full page HTML to: $postsHtmlPath." -ForegroundColor Green
+    Write-Host "Successfully saved the full page HTML to: $postsHtmlPath." -ForegroundColor Cyan
 
     $resultMessage = if ($targetFound) {
         "Found 10 posts!"

@@ -3,7 +3,7 @@
 #Profile top scrap
 $network = "linkedin"
 $networkUri = "https://www.{0}.com/" -F $network
-$networkProfile = "{0}{1}" -F $networkUri, "in/frederica-pereira-647992335/"
+$networkProfile = "{0}{1}" -F $networkUri, "in/mbeatrizoliveira/"
 
 $global:socialNetwork = [PSCustomObject]@{
     Name = $network
@@ -11,6 +11,7 @@ $global:socialNetwork = [PSCustomObject]@{
     Profile = $networkProfile
     Cookies = "Services/{0}/cookies.csv" -F $network
 }
+
 $global:scrappingSection = "posts"
 
 #Retry policy

@@ -17,3 +17,10 @@ if($loggedIn) {
 } else {
     Write-Host "Something went wrong..." -ForegroundColor Red
 }
+
+# Close the browser when finished
+if ($global:driver) {
+    Write-Host "Closing browser..." -ForegroundColor Cyan
+    $global:driver.Quit()
+    Write-Host "Browser closed successfully." -ForegroundColor Green
+}
