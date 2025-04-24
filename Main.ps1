@@ -5,7 +5,7 @@ Clear-Host
 . .\Services\Selenium.ps1
 . .\Services\Login.ps1
 . .\Factory\ScrappingSections.ps1
-
+. .\Factory\ConstructPath.ps1
 
 # Start Scrapping
 $loggedIn = Login-Network -network $global:socialNetwork.Name

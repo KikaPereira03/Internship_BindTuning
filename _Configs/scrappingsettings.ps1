@@ -3,7 +3,7 @@
 #Profile top scrap
 $network = "linkedin"
 $networkUri = "https://www.{0}.com/" -F $network
-$networkProfile = "{0}{1}" -F $networkUri, "in/tomás-vrodrigues/"
+$networkProfile = "{0}{1}" -F $networkUri, "in/frederica-pereira-647992335/"
 
 $global:socialNetwork = [PSCustomObject]@{
     Name = $network

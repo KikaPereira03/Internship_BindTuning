@@ -18,44 +18,12 @@ function Get-ScrappedSection {
     }
 }
 
-
-#region Global Variables
-$global:maxRetries = 5 # Maximum number of retries for page load operations
-#endregion
-
-function Get-ScrappedSection {
-    param(
-        [string]$section,
-        [string]$network
-    )
-
-    switch ($section) {
-        "posts" {
-            Get-Posts -network $network
-            break
-        }
-        "profile" {
-            Get-Profile # Assuming Get-Profile is defined elsewhere
-            break
-        }
-        default {
-            Write-Host "Warning: Section '$section' is not recognized."
-        }
-    }
-}
-
 function Get-Posts {
     param(
         [string]$network
     )
 
-    #region Variables
-    # Import the path construction script
-    . .\Factory\ConstructPath.ps1
-
-    # Get the paths for saving data
-    $paths = Get-LinkedInDataPath -profileUrl $global:socialNetwork.Profile
-    $postsHtmlPath = $paths.FilePath
+    #Variables
     $postsUrl = $global:socialNetwork.Profile + "recent-activity/all/"
 
     $retryCount = 0
@@ -77,52 +45,53 @@ function Get-Posts {
     $lastVisiblePostPosition = 0
     $scrollDistance = 0
     $resultMessage = ""
-    #endregion
 
-#region Navigate to Posts Page
-Write-Host "Navigating to posts page: $postsUrl"
 
-try {
-    $global:driver.Navigate().GoToUrl($postsUrl)
-    Start-Sleep -Seconds 2
+    Write-Host "Navigating to posts page: $postsUrl"
 
-    $retryCount = 0
-    $pageLoaded = $false
-
-    while ($retryCount -lt $global:maxRetries) {
-        try {
-            # Wait for at least one post to be present inside the scroll container
-            $postItem = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__content')]//ul/li")
-
-            if ($postItem.Displayed) {
-                $pageLoaded = $true
-                break
-            }
-        }
-        catch {
-            Write-Host "Retry $($retryCount + 1): Posts content not yet loaded..."
-        }
-
+    try {
+        $global:driver.Navigate().GoToUrl($postsUrl)
         Start-Sleep -Seconds 2
-        $retryCount++
-    }
 
-    if ($pageLoaded) {
-        Write-Host "Posts page loaded successfully."
-    } else {
-        Write-Host "Error: Could not confirm that the posts page loaded."
+        $retryCount = 0
+        $pageLoaded = $false
+
+        while ($retryCount -lt $global:maxRetries) {
+            try {
+                # Wait for at least one post inside the scroll container
+                $postItem = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__content')]//ul/li")
+
+                if ($postItem.Displayed) {
+                    $pageLoaded = $true
+                    break
+                }
+            }
+            catch {
+                Write-Host "Retry $($retryCount + 1): Posts content not yet loaded..."
+            }
+
+            Start-Sleep -Seconds 2
+            $retryCount++
+        }
+
+        if ($pageLoaded) {
+            Write-Host "Posts page loaded successfully." -ForegroundColor Green
+        } else {
+            Write-Host "Error: Could not confirm that the posts page loaded."
+            return
+        }
+
+    } catch {
+        Write-Host "Error navigating to the posts page: $_"
         return
     }
 
-} catch {
-    Write-Host "Error navigating to the posts page: $_"
-    return
-}
-#endregion
+    # Use the Get-FolderPath function
+    $paths = Get-FolderPath -driver $driver -baseFolder "_logs" -category "Activity"
+    $categoryFolderPath = $paths.CategoryPath
+    $postsHtmlPath = $paths.FilePath
 
-
-
-    #region Find Post Elements by Headers
+    #Find Post Elements by Headers
     Write-Host "Attempting to find posts by 'Feed post number' headers..."
     try {
         # Try finding headers with exact class and content
@@ -176,7 +145,7 @@ try {
                         if ($postElement) {
                             $postElements += $postElement
                             Write-Host "Found post container using path: '$path'."
-                            break # Move to the next header once a container is found
+                            break 
                         }
                     }
                     catch {
@@ -189,7 +158,7 @@ try {
             }
 
             if ($postElements.Count -gt 0) {
-                Write-Host "Successfully found $($postElements.Count) complete posts based on visible headers."
+                Write-Host "Successfully found $($postElements.Count) complete posts based on visible headers." -ForegroundColor Green
 
                 # Save a limited number of posts
                 $limitToSave = [Math]::Min($limit, $postElements.Count)
@@ -220,9 +189,8 @@ try {
     catch {
         Write-Host "Error trying to find posts by headers: $_"
     }
-    #endregion
 
-    #region Scroll to Find More Posts
+    #Scroll to Find More Posts
     Write-Host "Beginning scrolling to find at least 10 posts..."
 
     # Initial scan for existing post numbers
@@ -233,8 +201,6 @@ try {
                               .map(h => h.textContent.trim());
             return headers;
 "@)
-
-        Write-Host "Initial scan found $($initialPosts.Count) posts."
 
         foreach ($post in $initialPosts) {
             if ($post -match "Feed post number (\d+)") {
@@ -247,8 +213,6 @@ try {
                 }
             }
         }
-
-        Write-Host "Highest post number initially visible: #$highestPostSeen."
 
         if ($targetFound) {
             Write-Host "Post #10 is already visible. Skipping further scrolling for now."
@@ -280,7 +244,7 @@ try {
 "@)
             $scrollAmount = $lastVisiblePostPosition + 50
             $global:driver.ExecuteScript("window.scrollBy(0, $scrollAmount);")
-            Write-Host "Initial scroll: Scrolled down $scrollAmount pixels. Waiting for content..."
+            Write-Host "Initial scroll: Scrolled down $scrollAmount pixels. Waiting for content..." -ForegroundColor Yellow
             Start-Sleep -Seconds 20
         } catch {
             $global:driver.ExecuteScript("window.scrollBy(0, 1200);")
@@ -353,13 +317,14 @@ try {
             Write-Host "Found $highestPostSeen posts through scrolling before stopping." -ForegroundColor Yellow
         }
     }
-    #endregion
 
-    #region Save Full Page HTML
-    Write-Host "Saving the full page HTML..."
+    $postsHtmlPath = Join-Path -Path $categoryFolderPath -ChildPath "LatestPosts.html"
+
+    # Save Full Page HTML
+    Write-Host "Saving the full page HTML..." 
     $fullHtml = $global:driver.PageSource
     $fullHtml | Out-File $postsHtmlPath -Encoding UTF8
-    Write-Host "Successfully saved the full page HTML to: $postsHtmlPath."
+    Write-Host "Successfully saved the full page HTML to: $postsHtmlPath." -ForegroundColor Green
 
     $resultMessage = if ($targetFound) {
         "Found 10 posts!"
@@ -368,6 +333,5 @@ try {
     } else {
         "Reached max scrolls at $highestPostSeen"
     }
-    Write-Host "Post scraping process finished with result: $resultMessage"
-    #endregion
+    Write-Host "Post scraping process finished with result: $resultMessage" -ForegroundColor Green
 }
