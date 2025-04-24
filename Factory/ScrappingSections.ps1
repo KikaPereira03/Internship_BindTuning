@@ -31,7 +31,7 @@ function Get-Posts {
     $limit = 10
     $highestPostSeen = 0
     $targetFound = $false
-    $maxScrollAttempts = 10
+    $maxScrollAttempts = 3
     $maxCheckAttemptsBeforeScroll = 10
     $found = $false
 
@@ -57,7 +57,8 @@ function Get-Posts {
                         Write-Host "Posts page loaded, but no posts are available." -ForegroundColor Yellow
                         break
                     }
-                } catch {
+                }
+                catch {
                     # No empty state found, continue checking for posts
                 }
                 
@@ -94,57 +95,46 @@ function Get-Posts {
             
                 return
             }
-        } else {
+        }
+        else {
             Write-Host "Error: Could not confirm that the posts page loaded." -ForegroundColor Red
             return
         }
-    } catch {
+    }
+    catch {
         Write-Host "Error navigating to the posts page: $_" -ForegroundColor Red
         return
     }
 
-    # Use the Get-FolderPath function
-    $paths = Get-FolderPath -driver $driver -baseFolder "_logs" -category "Activity"
-    $categoryFolderPath = $paths.CategoryPath
-    $postsHtmlPath = $paths.FilePath
-
     #Find Post Elements by Headers
     Write-Host "Attempting to find posts by 'Feed post number' headers..."
     try {
-        # Try finding headers with exact class and content
-        $feedPostHeaders = $global:driver.FindElementsByXPath("//h2[@class='visually-hidden' and contains(text(), 'Feed post number')]")
-        Write-Host "Found $($feedPostHeaders.Count) feed post headers (class and content match)."
-
-        # If no exact matches, try with just the content
-        if ($feedPostHeaders.Count -eq 0) {
-            $feedPostHeaders = $global:driver.FindElementsByXPath("//h2[contains(text(), 'Feed post number')]")
-            Write-Host "Found $($feedPostHeaders.Count) feed post headers (content match only)."
-
-            # If still no results, perform a more exhaustive search
-            if ($feedPostHeaders.Count -eq 0) {
-                $allHeaders = $global:driver.FindElementsByTagName("h2")
-                Write-Host "Found $($allHeaders.Count) total h2 elements on the page. Examining each..."
-                foreach ($header in $allHeaders) {
-                    try {
-                        $text = $header.Text
-                        if ($text -match "Feed post number") {
-                            # Check if the element is visible
-                            $isVisible = $global:driver.ExecuteScript("return arguments[0].offsetParent !== null;", $header)
-                            if ($isVisible) {
-                                Write-Host "Found a visible header with text: '$text'."
-                                $feedPostHeaders += $header # Add the visible header to our collection
-                            }
-                            else {
-                                Write-Host "Found a header with text: '$text', but it is not currently visible."
-                            }
-                        }
+        # Directly use the exhaustive search method
+        $feedPostHeaders = @()
+        $allHeaders = $global:driver.FindElementsByTagName("h2")
+        Write-Host "Found $($allHeaders.Count) total h2 elements on the page. Examining each..."
+        
+        foreach ($header in $allHeaders) {
+            try {
+                $text = $header.Text
+                if ($text -match "Feed post number") {
+                    # Check if the element is visible
+                    $isVisible = $global:driver.ExecuteScript("return arguments[0].offsetParent !== null;", $header)
+                    if ($isVisible) {
+                        Write-Host "Found a visible header with text: '$text'."
+                        $feedPostHeaders += $header # Add the visible header to our collection
                     }
-                    catch {
-                        Write-Host "Error examining header: $_"
+                    else {
+                        Write-Host "Found a header with text: '$text', but it is not currently visible."
                     }
                 }
             }
+            catch {
+                Write-Host "Error examining header: $_"
+            }
         }
+        
+        Write-Host "Found $($feedPostHeaders.Count) feed post headers after examination."
 
         # Extract post elements if visible headers are found
         if ($feedPostHeaders.Count -gt 0) {
@@ -234,7 +224,8 @@ function Get-Posts {
         if ($targetFound) {
             Write-Host "Post #10 is already visible. Skipping further scrolling for now."
         }
-    } catch {
+    }
+    catch {
         Write-Host "Error during initial post scan: $_"
     }
 
@@ -263,7 +254,8 @@ function Get-Posts {
             $global:driver.ExecuteScript("window.scrollBy(0, $scrollAmount);")
             Write-Host "Initial scroll: Scrolled down $scrollAmount pixels. Waiting for content..." -ForegroundColor Yellow
             Start-Sleep -Seconds 20
-        } catch {
+        }
+        catch {
             $global:driver.ExecuteScript("window.scrollBy(0, 1200);")
             Write-Host "Initial scroll: Fallback scroll performed. Waiting for content..."
             Start-Sleep -Seconds 20
@@ -292,15 +284,18 @@ function Get-Posts {
                                     break
                                 }
                                 break
-                            } else {
-                                Write-Host "Found post #$targetPostNumber, but it is not currently visible." -ForegroundColor Red                            }
+                            }
+                            else {
+                                Write-Host "Found post #$targetPostNumber, but it is not currently visible." -ForegroundColor Red                            
+                            }
                         }
                     }
                     if (-not $found) {
                         Write-Host "Check attempt $checkAttempt/${maxCheckAttemptsBeforeScroll}: Post #$targetPostNumber not found or not visible."
                         Start-Sleep -Seconds 10 # Reduced sleep time between checks
                     }
-                } catch {
+                }
+                catch {
                     Write-Host "Error checking for post #${targetPostNumber}: $_"
                     Start-Sleep -Seconds 10
                 }
@@ -313,7 +308,8 @@ function Get-Posts {
                     $global:driver.ExecuteScript("window.scrollBy(0, $scrollDistance);")
                     Write-Host "Scrolled down $scrollDistance pixels."
                     Start-Sleep -Seconds 20
-                } catch {
+                }
+                catch {
                     Write-Host "Error during scroll: $_"
                 }
                 $noChangeCount++
@@ -330,7 +326,8 @@ function Get-Posts {
 
         if ($highestPostSeen -ge 10) {
             Write-Host "Successfully found at least 10 posts." -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Host "Found $highestPostSeen posts through scrolling before stopping." -ForegroundColor Yellow
         }
     }
@@ -345,9 +342,11 @@ function Get-Posts {
 
     $resultMessage = if ($targetFound) {
         "Found 10 posts!"
-    } elseif ($noChangeCount -ge 3) {
+    }
+    elseif ($noChangeCount -ge 3) {
         "No new visible posts after $highestPostSeen"
-    } else {
+    }
+    else {
         "Reached max scrolls at $highestPostSeen"
     }
     Write-Host "Post scraping process finished with result: $resultMessage" -ForegroundColor Green
