@@ -6,8 +6,14 @@ $networkUri = "https://www.{0}.com/" -F $network
 $networkProfile = "{0}{1}" -F $networkUri, "in/"
 
 #Profiles to scrap
-$profileUsernames = @("danielando", "techchirag", "rebeckaisaksson", "adisjugo", "bniaulin", "christianbuckley", "eshupps", "ericoverfield", "meetdux", "egorzon")
-# $profileUsernames = @("carlos-miguel-silva")
+$profileUsernames = @()
+$profilesPath = "./users.txt"
+Get-Content $profilesPath | ForEach-Object {
+    if($_ -match "^#") {
+        return
+    }
+    $profileUsernames += $_
+}
 
 $global:networkProfiles = foreach ($username in $profileUsernames) {
     "{0}{1}/recent-activity/all/" -F $networkProfile, $username
