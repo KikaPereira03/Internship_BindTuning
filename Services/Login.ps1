@@ -10,7 +10,7 @@ function Login-Network {
     # Try cookie-based login first
     $loggedInWithCookies = $false
 
-    if (Test-Path $global:cookiePath) {
+    if (Test-Path $global:socialNetwork.Cookies) {
         try {
             Write-Host "Trying login using saved cookies..."
             $global:driver.Navigate().GoToUrl($global:socialNetwork.Uri)
@@ -136,7 +136,7 @@ function Login-Network {
             $currentUrl = $global:driver.Url
             if ($currentUrl -like "*feed*") {
                 $cookieList = Get-SeCookie -Driver $global:driver
-                $cookieList | Export-Csv -Path $global:cookiePath -NoTypeInformation
+                $cookieList | Export-Csv -Path $global:socialNetwork.Cookies -NoTypeInformation
                 Write-Host "Cookies Saved"
             }
         }

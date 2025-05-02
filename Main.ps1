@@ -13,7 +13,7 @@ $loggedIn = Login-Network -network $global:socialNetwork.Name
 if($loggedIn) {
     Write-Host "I'm in..." -ForegroundColor Green
 
-    foreach ($profile in $networkProfiles) {
+    foreach ($profile in $global:networkProfiles) {
         Get-Posts -Profile $profile
     }
 } else {
