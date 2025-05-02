@@ -2,7 +2,7 @@
 Import-Module Selenium
 
 # Set Chrome driver path—
-$chromeDriverPath = "/Users/kikapereira/FEUP/3Ano/Estágio/chromedriver-mac-arm64_second/"
+$chromeDriverPath = "./_Configs/chromedriver-mac-arm64_second"
 
 # Initialize Chrome options with additional settings
 $chromeOptions = New-Object OpenQA.Selenium.Chrome.ChromeOptions
