@@ -20,334 +20,301 @@ function Get-ScrappedSection {
 
 function Get-Posts {
     param(
-        [string]$network
-    )
+        [Parameter(Mandatory)]
+        [string]$Profile)
 
-    #Variables
-    $postsUrl = $global:socialNetwork.Profile + "recent-activity/all/"
-
-    $pageLoaded = $false
-    $postElements = @()
-    $limit = 10
-    $highestPostSeen = 0
-    $targetFound = $false
-    $maxScrollAttempts = 3
-    $maxCheckAttemptsBeforeScroll = 10
-    $found = $false
-
-
+    $postsUrl = $Profile
     Write-Host "Navigating to posts page: $postsUrl"
 
-    try {
-        $global:driver.Navigate().GoToUrl($postsUrl)
-        Start-Sleep -Seconds 2
-    
-        $retryCount = 0
-        $pageLoaded = $false
-        $noPosts = $false
-    
-        while ($retryCount -lt $global:maxRetries) {
-            try {
-                # First check if the page has loaded with the empty state message
-                try {
-                    $emptyContainer = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__empty')]")
-                    if ($emptyContainer -and $emptyContainer.Displayed) {
-                        $pageLoaded = $true
-                        $noPosts = $true
-                        Write-Host "Posts page loaded, but no posts are available." -ForegroundColor Yellow
-                        break
-                    }
-                }
-                catch {
-                    # No empty state found, continue checking for posts
-                }
-                
-                # Check for posts if no empty state was found
-                $postItem = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__content')]//ul/li")
-                if ($postItem.Displayed) {
-                    $pageLoaded = $true
-                    Write-Host "Posts found on the page." -ForegroundColor Green
-                    break
-                }
-            }
-            catch {
-                Write-Host "Retry $($retryCount + 1): Posts content not yet loaded..."
-            }
-    
-            Start-Sleep -Seconds 2
-            $retryCount++
-        }
-    
-        if ($pageLoaded) {
-            Write-Host "Posts page loaded successfully." -ForegroundColor Green
-            
-            # Use the Get-FolderPath function regardless of whether there are posts
-            $paths = Get-FolderPath -driver $driver -baseFolder "_logs" -category "Activity"
-            $categoryFolderPath = $paths.CategoryPath
-            $postsHtmlPath = $paths.FilePath
-            
-            # If no posts were found, create a file with the empty state message
-            if ($noPosts) {
-                Write-Host "No posts found for this profile." -ForegroundColor Yellow
-                $noPostsHtml = "<html><head><meta charset='UTF-8'><title>No Posts Found</title></head><body><h1>Nothing to see for now</h1><p>This profile has no activity posts.</p></body></html>"
-                $noPostsHtml | Out-File $postsHtmlPath -Encoding UTF8
-                Write-Host "Created empty posts file at: $postsHtmlPath"
-            
-                return
-            }
-        }
-        else {
-            Write-Host "Error: Could not confirm that the posts page loaded." -ForegroundColor Red
-            return
-        }
-    }
-    catch {
-        Write-Host "Error navigating to the posts page: $_" -ForegroundColor Red
+    $result = Navigate-ToPostsPage -url $postsUrl
+    if (-not $result.PageLoaded) {
+        Write-Host "Error: Could not load posts page." -ForegroundColor Red
         return
     }
 
-    #Find Post Elements by Headers
-    Write-Host "Attempting to find posts by 'Feed post number' headers..."
-    try {
-        # Directly use the exhaustive search method
-        $feedPostHeaders = @()
-        $allHeaders = $global:driver.FindElementsByTagName("h2")
-        Write-Host "Found $($allHeaders.Count) total h2 elements on the page. Examining each..."
-        
-        foreach ($header in $allHeaders) {
-            try {
-                $text = $header.Text
-                if ($text -match "Feed post number") {
-                    # Check if the element is visible
-                    $isVisible = $global:driver.ExecuteScript("return arguments[0].offsetParent !== null;", $header)
-                    if ($isVisible) {
-                        Write-Host "Found a visible header with text: '$text'."
-                        $feedPostHeaders += $header # Add the visible header to our collection
-                    }
-                    else {
-                        Write-Host "Found a header with text: '$text', but it is not currently visible."
-                    }
-                }
-            }
-            catch {
-                Write-Host "Error examining header: $_"
-            }
-        }
-        
-        Write-Host "Found $($feedPostHeaders.Count) feed post headers after examination."
+    $paths = Get-FolderPath -driver $global:driver -baseFolder "_logs" -category "Activity"
+    $postsHtmlPath = $paths.FilePath
+    $categoryFolderPath = $paths.CategoryPath
 
-        # Extract post elements if visible headers are found
-        if ($feedPostHeaders.Count -gt 0) {
-            foreach ($header in $feedPostHeaders) {
-                # Define potential XPath paths to the post container
-                $ancestryPaths = @(
-                    "./ancestor::div[contains(@class, 'feed-shared-update-v2')]",
-                    "./ancestor::div[@role='article']",
-                    "./ancestor::div[contains(@class, 'relative') and contains(@class, 'artdeco-card')]"
-                )
-
-                foreach ($path in $ancestryPaths) {
-                    try {
-                        $postElement = $header.FindElementByXPath($path)
-                        if ($postElement) {
-                            $postElements += $postElement
-                            Write-Host "Found post container using path: '$path'."
-                            break 
-                        }
-                    }
-                    catch {
-                        # Continue to the next path if the current one fails
-                    }
-                }
-                if (-not $postElement) {
-                    Write-Host "Warning: Could not find a post container for a visible header."
-                }
-            }
-
-            if ($postElements.Count -gt 0) {
-                Write-Host "Successfully found $($postElements.Count) complete posts based on visible headers." -ForegroundColor Green
-
-                # Save a limited number of posts
-                $limitToSave = [Math]::Min($limit, $postElements.Count)
-                $htmlOutput = "<html><head><meta charset='UTF-8'><title>Posts By Headers</title></head><body>"
-
-                for ($i = 0; $i -lt $limitToSave; $i++) {
-                    try {
-                        $html = $postElements[$i].GetAttribute("outerHTML")
-                        if ($html) {
-                            $htmlOutput += $html
-                            Write-Host "Added post $($i + 1) to output."
-                        }
-                    }
-                    catch {
-                        Write-Host "Error reading post $($i + 1): $_"
-                    }
-                }
-
-                $htmlOutput += "</body></html>"
-                $htmlOutput | Out-File $postsHtmlPath -Encoding UTF8
-                Write-Host "Saved $limitToSave posts to: $postsHtmlPath."
-            }
-            else {
-                Write-Host "Warning: Could not find any post containers associated with the identified visible headers."
-            }
-        }
-    }
-    catch {
-        Write-Host "Error trying to find posts by headers: $_"
+    if ($result.NoPosts) {
+        Save-NoPostsHtml -path $postsHtmlPath
+        return
     }
 
-    #Scroll to Find More Posts
-    Write-Host "Beginning scrolling to find at least 10 posts..."
+    $headers = Get-VisibleFeedPostHeaders
+    $postElements = Extract-PostContainers -headers $headers
+    Save-PostsToFile -posts $postElements -limit 10 -path $postsHtmlPath
 
-    # Initial scan for existing post numbers
-    try {
-        $initialPosts = $global:driver.ExecuteScript(@"
-            const headers = Array.from(document.querySelectorAll('h2'))
-                              .filter(h => h.textContent.includes('Feed post number'))
-                              .map(h => h.textContent.trim());
-            return headers;
-"@)
-
-        foreach ($post in $initialPosts) {
-            if ($post -match "Feed post number (\d+)") {
-                $number = [int]$matches[1]
-                if ($number -gt $highestPostSeen) {
-                    $highestPostSeen = $number
-                }
-                if ($number -eq 10) {
-                    $targetFound = $true
-                }
-            }
-        }
-
-        if ($targetFound) {
-            Write-Host "Post #10 is already visible. Skipping further scrolling for now."
-        }
-    }
-    catch {
-        Write-Host "Error during initial post scan: $_"
+    $highestSeen = Scan-VisiblePostNumbers
+    if ($highestSeen -lt 10) {
+        $highestSeen = Scroll-ToFindMorePosts -startFrom $highestSeen
     }
 
-    # Scroll and check for more posts if target not found
-    if (-not $targetFound) {
-        $targetPostNumber = $highestPostSeen + 1
-        $scrollAttempt = 0
-        $noChangeCount = 0
+    Save-FullPageHtml -path (Join-Path $categoryFolderPath "LatestPosts.html")
+}
 
-        Write-Host "Looking for post #$targetPostNumber..."
+function Navigate-ToPostsPage {
+    param([string]$url)
 
-        # Initial scroll to load more content
+    $global:driver.Navigate().GoToUrl($url)
+    Start-Sleep -Seconds 2
+
+    for ($retry = 0; $retry -lt $global:maxRetries; $retry++) {
         try {
-            $lastVisiblePostPosition = $global:driver.ExecuteScript(@"
-                const headers = Array.from(document.querySelectorAll('h2'))
-                                  .filter(h => h.textContent.includes('Feed post number'))
-                                  .filter(h => h.offsetParent !== null);
-                if (headers.length > 0) {
-                    const lastPost = headers[headers.length - 1];
-                    return lastPost.getBoundingClientRect().bottom;
-                } else {
-                    return 500;
-                }
-"@)
-            $scrollAmount = $lastVisiblePostPosition + 50
-            $global:driver.ExecuteScript("window.scrollBy(0, $scrollAmount);")
-            Write-Host "Initial scroll: Scrolled down $scrollAmount pixels. Waiting for content..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 20
+            $emptyContainer = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__empty')]")
+            if ($emptyContainer -and $emptyContainer.Displayed) {
+                return @{ PageLoaded = $true; NoPosts = $true }
+            }
         }
-        catch {
-            $global:driver.ExecuteScript("window.scrollBy(0, 1200);")
-            Write-Host "Initial scroll: Fallback scroll performed. Waiting for content..."
-            Start-Sleep -Seconds 20
-        }
+        catch {}
 
-        while (($targetPostNumber -le 10) -and ($scrollAttempt -lt $maxScrollAttempts) -and ($noChangeCount -lt 3)) {
-            $found = $false
-            for ($checkAttempt = 1; ($checkAttempt -le $maxCheckAttemptsBeforeScroll) -and (-not $found); $checkAttempt++) {
-                try {
-                    $allHeaders = $global:driver.FindElementsByTagName("h2")
-                    foreach ($header in $allHeaders) {
-                        $text = $header.Text
-                        if ($text -match "Feed post number $targetPostNumber") {
-                            # Check for visibility
-                            $isVisible = $global:driver.ExecuteScript("return arguments[0].offsetParent !== null;", $header)
-                            if ($isVisible) {
-                                Write-Host "Found visible post #$targetPostNumber on check attempt $checkAttempt."
-                                $highestPostSeen = $targetPostNumber
-                                $targetPostNumber = $highestPostSeen + 1
-                                $noChangeCount = 0
-                                $found = $true
-                                Write-Host "Now looking for post #$targetPostNumber..."
-                                if ($highestPostSeen -eq 10) {
-                                    $targetFound = $true
-                                    Write-Host "Found target post #10!"
-                                    break
-                                }
-                                break
-                            }
-                            else {
-                                Write-Host "Found post #$targetPostNumber, but it is not currently visible." -ForegroundColor Red                            
-                            }
-                        }
-                    }
-                    if (-not $found) {
-                        Write-Host "Check attempt $checkAttempt/${maxCheckAttemptsBeforeScroll}: Post #$targetPostNumber not found or not visible."
-                        Start-Sleep -Seconds 10 # Reduced sleep time between checks
-                    }
-                }
-                catch {
-                    Write-Host "Error checking for post #${targetPostNumber}: $_"
-                    Start-Sleep -Seconds 10
+        try {
+            $postItem = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__content')]//ul/li")
+            if ($postItem.Displayed) {
+                return @{ PageLoaded = $true; NoPosts = $false }
+            }
+        }
+        catch {}
+
+        Start-Sleep -Seconds 2
+    }
+
+    return @{ PageLoaded = $false; NoPosts = $false }
+}
+
+function Save-NoPostsHtml {
+    param([string]$path)
+
+    $html = "<html><head><meta charset='UTF-8'><title>No Posts Found</title></head><body><h1>Nothing to see for now</h1><p>This profile has no activity posts.</p></body></html>"
+    $html | Out-File $path -Encoding UTF8
+    Write-Host "Created empty posts file at: $path"
+}
+
+function Get-VisibleFeedPostHeaders {
+    $visibleHeaders = @()
+    $headers = $global:driver.FindElementsByTagName("h2")
+
+    foreach ($header in $headers) {
+        try {
+            $text = $header.Text
+            if ($text -match "Feed post number") {
+                $isVisible = $global:driver.ExecuteScript("return arguments[0].offsetParent !== null;", $header)
+                if ($isVisible) {
+                    $visibleHeaders += $header
                 }
             }
+        }
+        catch {}
+    }
 
-            if (-not $found) {
-                Write-Host "Post #$targetPostNumber not found or not visible after $maxCheckAttemptsBeforeScroll checks. Scrolling more..."
-                try {
-                    $scrollDistance = 1000 + ($scrollAttempt * 300)
-                    $global:driver.ExecuteScript("window.scrollBy(0, $scrollDistance);")
-                    Write-Host "Scrolled down $scrollDistance pixels."
-                    Start-Sleep -Seconds 20
-                }
-                catch {
-                    Write-Host "Error during scroll: $_"
-                }
-                $noChangeCount++
-                $scrollAttempt++
-                if ($noChangeCount -ge 3) {
-                    Write-Host "Warning: No new visible posts found after 3 scroll attempts. Stopping search."
+    return $visibleHeaders
+}
+
+function Extract-PostContainers {
+    param([Parameter(Mandatory)] [array]$headers)
+
+    $postElements = @()
+    foreach ($header in $headers) {
+        $paths = @(
+            "./ancestor::div[contains(@class, 'feed-shared-update-v2')]",
+            "./ancestor::div[@role='article']",
+            "./ancestor::div[contains(@class, 'relative') and contains(@class, 'artdeco-card')]"
+        )
+
+        foreach ($path in $paths) {
+            try {
+                $element = $header.FindElementByXPath($path)
+                if ($element) {
+                    $postElements += $element
                     break
                 }
             }
-            if ($targetFound) {
-                break # Exit the while loop if target is found
+            catch {}
+        }
+    }
+
+    return $postElements
+}
+
+function Save-PostsToFile {
+    param(
+        [array]$posts,
+        [int]$limit,
+        [string]$path
+    )
+
+    $limit = [Math]::Min($limit, $posts.Count)
+    $html = "<html><head><meta charset='UTF-8'><title>Posts</title></head><body>"
+
+    for ($i = 0; $i -lt $limit; $i++) {
+        try {
+            $html += $posts[$i].GetAttribute("outerHTML")
+        }
+        catch {}
+    }
+
+    $html += "</body></html>"
+    $html | Out-File $path -Encoding UTF8
+}
+
+function Scan-VisiblePostNumbers {
+    $highest = 0
+    $foundPostNumbers = @()
+
+    Write-Host "Looking for initially loaded posts..." 
+
+    try {
+        $headers = $global:driver.ExecuteScript(@"
+            return Array.from(document.querySelectorAll('h2'))
+                        .filter(h => h.textContent.includes('Feed post number'))
+                        .map(h => h.textContent.trim());
+"@)
+
+        foreach ($text in $headers) {
+            if ($text -match "Feed post number (\d+)") {
+                $num = [int]$matches[1]
+                $foundPostNumbers += $num
+                if ($num -gt $highest) { $highest = $num }
             }
         }
 
-        if ($highestPostSeen -ge 10) {
-            Write-Host "Successfully found at least 10 posts." -ForegroundColor Green
+        if ($foundPostNumbers.Count -gt 0) {
+            Write-Host "Found posts: $($foundPostNumbers -join ", ")" -ForegroundColor Cyan
+        } else {
+            Write-Host "No initially loaded posts found."
         }
-        else {
-            Write-Host "Found $highestPostSeen posts through scrolling before stopping." -ForegroundColor Yellow
+    } catch {
+        Write-Host "Error scanning initial post numbers: $_"
+    }
+
+    return $highest
+}
+
+function Scroll-ToFindMorePosts {
+    param(
+        [int]$highestSeen,
+        [int]$maxScrolls = 3,
+        [int]$maxChecks = 10,
+        [int]$targetPost = 10
+    )
+
+    $scrollAttempt = 0
+    $noChangeCount = 0
+    $targetFound = $false
+    $foundPosts = @()
+
+    Write-Host "Scrolling more until target ($targetPost) is met..."
+
+    try {
+        $scrollAmount = $global:driver.ExecuteScript(@"
+            const headers = Array.from(document.querySelectorAll('h2'))
+                .filter(h => h.textContent.includes('Feed post number'))
+                .filter(h => h.offsetParent !== null);
+            if (headers.length > 0) {
+                const last = headers[headers.length - 1];
+                return last.getBoundingClientRect().bottom + 50;
+            }
+            return 500;
+"@)
+        $global:driver.ExecuteScript("window.scrollBy(0, $scrollAmount);")
+        Start-Sleep -Seconds 20
+    } catch {
+        $global:driver.ExecuteScript("window.scrollBy(0, 1200);")
+        Start-Sleep -Seconds 20
+    }
+
+    while (($highestSeen -lt $targetPost) -and ($scrollAttempt -lt $maxScrolls) -and ($noChangeCount -lt 3)) {
+        $found = $false
+
+        for ($check = 1; $check -le $maxChecks -and -not $found; $check++) {
+            try {
+                $allHeaders = $global:driver.FindElementsByTagName("h2")
+                foreach ($header in $allHeaders) {
+                    if ($header.Text -match "Feed post number (\d+)") {
+                        $num = [int]$matches[1]
+                        if ($num -eq ($highestSeen + 1)) {
+                            $visible = $global:driver.ExecuteScript("return arguments[0].offsetParent !== null;", $header)
+                            if ($visible) {
+                                $highestSeen = $num
+                                $foundPosts += $num
+                                $found = $true
+                                if ($highestSeen -eq $targetPost) {
+                                    Write-Host "Target met! Found post #$targetPost." -ForegroundColor Green
+                                    $targetFound = $true
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch {
+                Write-Host "Error during check: $_"
+            }
+
+            if (-not $found) {
+                Start-Sleep -Seconds 10
+            }
+        }
+
+        if (-not $found) {
+            try {
+                $scrollDistance = 1000 + ($scrollAttempt * 300)
+                $global:driver.ExecuteScript("window.scrollBy(0, $scrollDistance);")
+                Start-Sleep -Seconds 20
+            } catch {}
+            $noChangeCount++
+            $scrollAttempt++
+        }
+
+        if ($targetFound) { break }
+    }
+
+    if ($foundPosts.Count -gt 0) {
+        Write-Host "Found posts: $($foundPosts -join ", ")"
+    }
+    Write-Host "Scrolling complete." 
+    return $highestSeen
+}
+
+function Convert-HTMLToJSON {
+    param(
+        [string]$htmlPath
+    )
+
+    Write-Host "Converting HTML to JSON..." -ForegroundColor Cyan
+    
+    try {
+        # Get the directory where the HTML file is located
+        $outputFolder = Split-Path -Parent $htmlPath
+        
+        # Path to your Python script
+        $pythonScript = Join-Path $PSScriptRoot "CreateJSON.py"
+        
+        # Run the Python script with the HTML file as input
+        python $pythonScript $htmlPath $outputFolder
+        
+        # Check if conversion was successful
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Successfully converted HTML to JSON. Output saved to: $outputFolder" -ForegroundColor Green
+        } else {
+            Write-Host "Error converting HTML to JSON. Exit code: $LASTEXITCODE" -ForegroundColor Red
         }
     }
-
-    $postsHtmlPath = Join-Path -Path $categoryFolderPath -ChildPath "LatestPosts.html"
-
-    # Save Full Page HTML
-    Write-Host "Saving the full page HTML..." 
-    $fullHtml = $global:driver.PageSource
-    $fullHtml | Out-File $postsHtmlPath -Encoding UTF8
-    Write-Host "Successfully saved the full page HTML to: $postsHtmlPath." -ForegroundColor Cyan
-
-    $resultMessage = if ($targetFound) {
-        "Found 10 posts!"
+    catch {
+        Write-Host "Exception occurred during HTML to JSON conversion: $_" -ForegroundColor Red
     }
-    elseif ($noChangeCount -ge 3) {
-        "No new visible posts after $highestPostSeen"
+}
+
+function Save-FullPageHtml {
+    param([string]$path)
+
+    try {
+        $html = $global:driver.PageSource
+        $html | Out-File $path -Encoding UTF8
+        Write-Host "Saved full HTML to: $path" -ForegroundColor Cyan
+        
+        Convert-HTMLToJSON -htmlPath $path
+    } catch {
+        Write-Host "Error saving full HTML: $_" -ForegroundColor Red
     }
-    else {
-        "Reached max scrolls at $highestPostSeen"
-    }
-    Write-Host "Post scraping process finished with result: $resultMessage" -ForegroundColor Green
 }

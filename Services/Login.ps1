@@ -7,12 +7,6 @@ function Login-Network {
     . .\_Configs\credentials.ps1
     . .\_Configs\scrappingsettings.ps1
 
-    
-
-    #---------------------------------------------
-    # LOGIN
-    #---------------------------------------------
-
     # Try cookie-based login first
     $loggedInWithCookies = $false
 
@@ -52,7 +46,6 @@ function Login-Network {
                     }
                 }
                 catch {
-                    Write-Host "Retry $($retryCount): Feed not fully loaded yet..."
                 }
     
                 # Wait before retrying

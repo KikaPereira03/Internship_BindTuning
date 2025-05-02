@@ -13,7 +13,10 @@ $loggedIn = Login-Network -network $global:socialNetwork.Name
 if($loggedIn) {
     Write-Host "I'm in..." -ForegroundColor Green
 
-    Get-ScrappedSection -section "posts" -network $global:socialNetwork.Name
+    foreach ($profile in $networkProfiles) {
+        Get-Posts -Profile $profile
+        Start-Sleep -Seconds 10
+    }
 } else {
     Write-Host "Something went wrong..." -ForegroundColor Red
 }

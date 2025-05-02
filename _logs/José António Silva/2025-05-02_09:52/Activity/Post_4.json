@@ -1,0 +1,33 @@
+{
+  "id": 4,
+  "post_type": "repost",
+  "date": "2024-05-02",
+  "description": "",
+  "content": "On April 16th and 17th, DevScope is joining Microsoft Portugal for a couple of SmartDocumentor Cloud showcase events, a unique platform that uses the latest AI advancements from Microsoft to answer the most demanding data processing needs of companies.Come to DevScope’s office in Porto (16) or Microsoft’s headquarters in Lisbon (17) to discover how your company can speed up data processing while drastically reducing costs with SmartDocumentor Cloud.Follow the link to check the agenda and sign up: https://lnkd.in/euyz9GvZ …more",
+  "image": "https://media.licdn.com/dms/image/v2/D4E22AQH-qCuoZHOBag/feedshare-shrink_2048_1536/feedshare-shrink_2048_1536/0/1711627097388?e=1749081600&v=beta&t=gIjB3CfgGyYaHL4emUCSI038IkyYXbWXqzOb66Oq7Uk",
+  "author": {
+    "name": "José António Silva",
+    "pic": "https://media.licdn.com/dms/image/v2/C5603AQFOvh4k0dHQqw/profile-displayphoto-shrink_100_100/profile-displayphoto-shrink_100_100/0/1637356170896?e=1751500800&v=beta&t=d5kSqHmlpemuEbN2DHTKLowgQq9u7O1Y2HQW74EdB-Y",
+    "slug": "jos-ant-nio-silva"
+  },
+  "slug": "on-april-16th-and-17th-devscope-is-joining",
+  "social_engament": {
+    "likes": 42,
+    "comments": 0,
+    "reposts": 29
+  },
+  "original_post": {
+    "author": {
+      "name": "DevScope",
+      "followers": 8765,
+      "date": "1y",
+      "pic": "https://media.licdn.com/dms/image/v2/C4D0BAQHyq-Qj0eb0Xw/company-logo_100_100/company-logo_100_100/0/1630574171754/devscope_logo?e=1751500800&v=beta&t=nKYH9xnrw5dbWm0dqjeA9S38eRa2ycGHgMwUM_SniRU",
+      "slug": "devscope"
+    },
+    "description": "On April 16th and 17th, DevScope is joining Microsoft Portugal for a couple of SmartDocumentor Cloud showcase events, a unique platform that uses the latest AI advancements from Microsoft to answer the most demanding data processing needs of companies.Come to DevScope’s office in Porto (16) or Microsoft’s headquarters in Lisbon (17) to discover how your company can speed up data processing while drastically reducing costs with SmartDocumentor Cloud.Follow the link to check the agenda and sign up: https://lnkd.in/euyz9GvZ …more",
+    "link": "",
+    "images": [
+      "https://media.licdn.com/dms/image/v2/D4E22AQH-qCuoZHOBag/feedshare-shrink_2048_1536/feedshare-shrink_2048_1536/0/1711627097388?e=1749081600&v=beta&t=gIjB3CfgGyYaHL4emUCSI038IkyYXbWXqzOb66Oq7Uk"
+    ]
+  }
+}

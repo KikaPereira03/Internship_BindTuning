@@ -1,9 +1,16 @@
 
-
-#Profile top scrap
 $network = "linkedin"
 $networkUri = "https://www.{0}.com/" -F $network
-$networkProfile = "{0}{1}" -F $networkUri, "in/canoas/"
+
+# Base Profile URL
+$networkProfile = "{0}{1}" -F $networkUri, "in/"
+
+#Profiles to scrap
+$profileUsernames = @("danielando", "techchirag", "rebeckaisaksson", "adisjugo", "bniaulin", "christianbuckley", "eshupps", "ericoverfield", "meetdux", "egorzon")
+
+$networkProfiles = foreach ($username in $profileUsernames) {
+    "{0}{1}/recent-activity/all/" -F $networkProfile, $username
+}
 
 $global:socialNetwork = [PSCustomObject]@{
     Name = $network
@@ -13,6 +20,8 @@ $global:socialNetwork = [PSCustomObject]@{
 }
 
 $global:scrappingSection = "posts"
+
+$global:cookiePath = "Services/linkedin_cookies.csv"
 
 #Retry policy
 $global:maxRetries = 20

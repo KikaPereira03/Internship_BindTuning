@@ -13,9 +13,8 @@ function Get-ProfileName {
     
     # Get the page title
     $pageTitle = $driver.Title
-    Write-Host "Page Title: $pageTitle"
     
-    # Extract name from activity page title pattern: "(25) Activity | Name | LinkedIn"
+    # Extract name from activity page title pattern: "Activity | Name | LinkedIn"
     if ($pageTitle -match '\(\d+\)\s*Activity\s*\|\s*([^|]+)\s*\|') {
         $name = $matches[1].Trim()
         return $name

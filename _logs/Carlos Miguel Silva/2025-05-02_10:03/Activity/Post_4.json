@@ -1,0 +1,31 @@
+{
+  "id": 4,
+  "post_type": "repost",
+  "date": "2025-04-02",
+  "description": "",
+  "content": "Las Vegas, here we come! BindTuning is excited to be a sponsor of the Microsoft 365 Community Conference, May 6-8. Are you planning to attend? 🤔 Let us know in the comments, or DM us on our profile! 💬 We'd love to schedule time to connect and discuss the latest innovations in #M365 #governance and #provisioning.#M365Conf #Microsoft365 #Microsoft #MSPartner #BindTuning …more",
+  "image": "",
+  "author": {
+    "name": "Carlos Miguel Silva",
+    "pic": "https://media.licdn.com/dms/image/v2/D5603AQE9Xql-K77BJw/profile-displayphoto-shrink_100_100/profile-displayphoto-shrink_100_100/0/1710419448647?e=1751500800&v=beta&t=5e5-CeNgsyB7kdqr7tPysKG6Ytce1MJIktNl25BxCf0",
+    "slug": "carlos-miguel-silva"
+  },
+  "slug": "las-vegas-here-we-come-bindtuning-is-excited",
+  "social_engament": {
+    "likes": 9,
+    "comments": 0,
+    "reposts": 3
+  },
+  "original_post": {
+    "author": {
+      "name": "BindTuning",
+      "followers": 4568,
+      "date": "1mo",
+      "pic": "https://media.licdn.com/dms/image/v2/C4D0BAQG-U0XuMHV5eg/company-logo_100_100/company-logo_100_100/0/1630548039652/bindtuning_logo?e=1751500800&v=beta&t=gdLp57D0FGoEx2VqaNHsWQDk6dNUxLmUG01RepA_VsI",
+      "slug": "bindtuning"
+    },
+    "description": "Las Vegas, here we come! BindTuning is excited to be a sponsor of the Microsoft 365 Community Conference, May 6-8. Are you planning to attend? 🤔 Let us know in the comments, or DM us on our profile! 💬 We'd love to schedule time to connect and discuss the latest innovations in #M365 #governance and #provisioning.#M365Conf #Microsoft365 #Microsoft #MSPartner #BindTuning …more",
+    "link": "",
+    "images": []
+  }
+}
