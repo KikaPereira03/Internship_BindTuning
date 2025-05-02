@@ -1,8 +1,19 @@
 # Import the Selenium module
 Import-Module Selenium
 
-# Set Chrome driver path—
-$chromeDriverPath = "./_Configs/chromedriver-mac-arm64_second"
+# Set Chrome driver path based on the operating system
+# https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json
+if ($IsWindows) {
+    $chromeDriverPath = ".\_Configs\chromedriver-mac-arm64_second\"
+} elseif ($IsMacOS) {
+    $chromeDriverPath = "./_Configs/chromedriver-mac-arm64_second/chromedriver"
+}
+
+# Check if the ChromeDriver path exists
+if (-not (Test-Path $chromeDriverPath)) {
+    Write-Host "ChromeDriver path does not exist: $chromeDriverPath" -ForegroundColor Red
+    Exit 1
+}
 
 # Initialize Chrome options with additional settings
 $chromeOptions = New-Object OpenQA.Selenium.Chrome.ChromeOptions

@@ -91,7 +91,7 @@ function Get-FolderPath {
         $folderName = $global:personName -replace '[\\\/\:\*\?\"\<\>\|]', '_'
         
         # Get current timestamp
-        $timestamp = Get-Date -Format "yyyy-MM-dd_HH:mm"
+        $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
         
         # Build paths - _logs/Name/TimeStamp/Activity/LatestPosts.html
         $basePath = Join-Path -Path (Get-Location) -ChildPath "_logs"
