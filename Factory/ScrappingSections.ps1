@@ -55,30 +55,82 @@ function Get-Posts {
 
 function Navigate-ToPostsPage {
     param([string]$url)
-
+    
+    Write-Host "Starting navigation to $url" -ForegroundColor Cyan
     $global:driver.Navigate().GoToUrl($url)
-    Start-Sleep -Seconds 2
-
-    for ($retry = 0; $retry -lt $global:maxRetries; $retry++) {
+    
+    # Log current URL and wait for initial load
+    try {
+        $currentUrl = $global:driver.Url
+        Write-Host "Current URL after navigation: $currentUrl" -ForegroundColor Gray
+    } catch {}
+    
+    Write-Host "Waiting 5 seconds for initial page load..." -ForegroundColor Gray
+    Start-Sleep -Seconds 5
+    
+    # CRITICAL FIX: Force setting maxRetries to ensure it's recognized
+    if (-not $global:maxRetries -or $global:maxRetries -le 0) {
+        $global:maxRetries = 20
+        Write-Host "Reset maxRetries to 20" -ForegroundColor Yellow
+    }
+    
+    Write-Host "Beginning retry loop with $global:maxRetries max attempts..." -ForegroundColor Magenta
+    
+    # Use a do-while loop instead to guarantee at least one iteration
+    $attemptCount = 0
+    do {
+        $attemptCount += 1
+        Write-Host "LOOP ITERATION: Attempt $attemptCount of $global:maxRetries" -ForegroundColor Magenta
+        
+        # Check for empty container
         try {
             $emptyContainer = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__empty')]")
             if ($emptyContainer -and $emptyContainer.Displayed) {
+                Write-Host "Found empty posts container." -ForegroundColor Yellow
                 return @{ PageLoaded = $true; NoPosts = $true }
             }
+        } catch {
+            Write-Host "No empty container found in attempt $attemptCount" -ForegroundColor Gray
         }
-        catch {}
-
+        
+        # Check for post items
         try {
             $postItem = $global:driver.FindElementByXPath("//div[contains(@class, 'scaffold-finite-scroll__content')]//ul/li")
             if ($postItem.Displayed) {
+                Write-Host "Found post container." -ForegroundColor Green
                 return @{ PageLoaded = $true; NoPosts = $false }
             }
+        } catch {
+            Write-Host "No post items found in attempt $attemptCount" -ForegroundColor Gray
         }
-        catch {}
-
-        Start-Sleep -Seconds 2
-    }
-
+        
+        # Try alternative selectors
+        try {
+            $alternateSelectors = @(
+                "//div[@role='article']",
+                "//div[contains(@class, 'feed-shared-update-v2')]",
+                "//div[contains(@class, 'artdeco-card')]//div[contains(@class, 'feed-shared-actor')]"
+            )
+            
+            foreach ($selector in $alternateSelectors) {
+                try {
+                    $element = $global:driver.FindElementByXPath($selector)
+                    if ($element -and $element.Displayed) {
+                        Write-Host "Found post using alternate selector: $selector" -ForegroundColor Green
+                        return @{ PageLoaded = $true; NoPosts = $false }
+                    }
+                } catch {}
+            }
+        } catch {}
+        
+        # Add an explicit wait before next iteration
+        if ($attemptCount -lt $global:maxRetries) {
+            Write-Host "Waiting 3 seconds before next attempt..." -ForegroundColor Gray
+            Start-Sleep -Seconds 3
+        }
+    } while ($attemptCount -lt $global:maxRetries)
+    
+    Write-Host "All $attemptCount attempts completed without finding elements." -ForegroundColor Red
     return @{ PageLoaded = $false; NoPosts = $false }
 }
 

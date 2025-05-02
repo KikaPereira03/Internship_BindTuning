@@ -15,7 +15,6 @@ if($loggedIn) {
 
     foreach ($profile in $networkProfiles) {
         Get-Posts -Profile $profile
-        Start-Sleep -Seconds 10
     }
 } else {
     Write-Host "Something went wrong..." -ForegroundColor Red
