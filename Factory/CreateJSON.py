@@ -241,17 +241,28 @@ def extract_post_description(post_container):
     """Extract the main content of the post"""
     description_container = post_container.select_one(".feed-shared-inline-show-more-text")
     if description_container:
-        # Get the text content and clean it
-        content = clean(description_container.get_text())
+        # Instead of getting the text directly, look for the full content in the span
+        content_span = description_container.select_one(".update-components-text .break-words span[dir='ltr']")
         
-        # Now replace any "hashtag" prefix that might have been added
-        content = content.replace("hashtag#", "#")
-        content = content.replace("hashtaghashtag#", "#")
-        
-        if "…more" not in content and description_container.select_one(".feed-shared-inline-show-more-text__see-more-less-toggle"):
-            content += " …more"
+        if content_span:
+            # This gets the full content regardless of the "...more" button
+            content = clean(content_span.get_text())
             
-        return content
+            # Now replace any "hashtag" prefix that might have been added
+            content = content.replace("hashtag#", "#")
+            content = content.replace("hashtaghashtag#", "#")
+            
+            return content
+        else:
+            # Fallback to the old method if we can't find the content span
+            content = clean(description_container.get_text())
+            content = content.replace("hashtag#", "#")
+            content = content.replace("hashtaghashtag#", "#")
+            
+            if "…more" not in content and description_container.select_one(".feed-shared-inline-show-more-text__see-more-less-toggle"):
+                content += " …more"
+                
+            return content
     return ""
 
 def extract_images(post_container):
