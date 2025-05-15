@@ -1,4 +1,3 @@
-
 $network = "linkedin"
 $networkUri = "https://www.{0}.com/" -F $network
 
@@ -6,14 +5,26 @@ $networkUri = "https://www.{0}.com/" -F $network
 $networkProfile = "{0}{1}" -F $networkUri, "in/"
 
 #Profiles to scrap
-$profileUsernames = @("techchirag")
-#, "danielando" ,"techchirag", "rebeckaisaksson", "adisjugo", "bniaulin", "christianbuckley", "eshupps", "ericoverfield", "meetdux", "egorzon")
-# $profileUsernames = @("paulkeijzers-sharepoint-specialist-teams-expert", "kasnowicka", "lesley-crook", "joslat", "deborahashby", "petercarson")
-# MVP´S - CEO´S - CTO´S - IT MANAGERS - IT SECURITY MANAGERS
+$profileUsernames = @()
+$profilesPath = "./users.txt"
+Get-Content $profilesPath | ForEach-Object {
+    if($_ -match "^#") {
+        return
+    }
+    $profileUsernames += $_
+}
 
-$networkProfiles = foreach ($username in $profileUsernames) {
+$global:networkProfiles = foreach ($username in $profileUsernames) {
     "{0}{1}/recent-activity/all/" -F $networkProfile, $username
 }
+
+#$profileUsernames = @("danielando")
+#, "techchirag", "rebeckaisaksson", "adisjugo", "bniaulin", "christianbuckley", "eshupps", "ericoverfield", "meetdux", "egorzon")
+# $profileUsernames = @("paulkeijzers-sharepoint-specialist-teams-expert", "kasnowicka", "lesley-crook", "joslat", "deborahashby", )
+#Profiles to scrap
+# $profileUsernames = @("danielando", "techchirag", "rebeckaisaksson", "adisjugo", "bniaulin", "christianbuckley", "eshupps", "ericoverfield", "meetdux", "egorzon")
+#$profileUsernames = @("carlos-miguel-silva")
+
 
 $global:socialNetwork = [PSCustomObject]@{
     Name = $network
