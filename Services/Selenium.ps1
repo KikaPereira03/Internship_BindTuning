@@ -6,7 +6,7 @@ Import-Module Selenium
 if ($IsWindows) {
     $chromeDriverPath = ".\_Configs\chromedriver-mac-arm64_second\"
 } elseif ($IsMacOS) {
-    $chromeDriverPath = "./_Configs/chromedriver-mac-arm64_second/chromedriver"
+    $chromeDriverPath = "./_Configs/chromedriver-mac-arm64-2"
 }
 
 # Check if the ChromeDriver path exists

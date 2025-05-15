@@ -61,7 +61,7 @@ function Login-Network {
             }
         }
         catch {
-            Write-Host"Cookie-based login failed. Will try manual login."
+            Write-Host "Cookie-based login failed. Will try manual login."
         }
     }
 
