@@ -40,7 +40,7 @@ def create_slug(text):
     # Remove leading/trailing hyphens
     text = text.strip('-')
     # Limit length
-    return text[:300]
+    return text[:400]
 
 def extract_date(date_text):
     """Convert LinkedIn relative date to YYYY-MM-DD format"""
@@ -86,6 +86,7 @@ def extract_author_info(post_container, default_name="Unknown User"):
     author_info = {
         "name": default_name,
         "pic": "",
+        "description": "",
         "slug": create_slug(default_name)
     }
     
@@ -98,11 +99,17 @@ def extract_author_info(post_container, default_name="Unknown User"):
             cleaned_name = clean_author_name(raw_name)
             author_info["name"] = cleaned_name
             author_info["slug"] = create_slug(cleaned_name)
+
+        # Get the reposter's description
+        description_elem = post_container.select_one(".update-components-header__description")
+        if description_elem:
+            author_info["description"] = clean(description_elem.get_text())
         
         # Find the reposter's profile image
         profile_img = post_container.select_one(".update-components-header__image img")
         if profile_img and "src" in profile_img.attrs:
             author_info["pic"] = profile_img["src"]
+
     else:
         # For direct posts, we need different selectors
         author_found = False
@@ -132,6 +139,27 @@ def extract_author_info(post_container, default_name="Unknown User"):
                     author_found = True
                     break
         
+        # Extract author description/headline
+        description_elem = post_container.select_one(".update-components-actor__description")
+        if description_elem:
+            author_info["description"] = clean(description_elem.get_text())
+            
+        # If we don't find it with that selector, try alternative selectors
+        if not author_info["description"]:
+            alt_desc_selectors = [
+                ".feed-shared-actor__description",
+                ".feed-shared-actor__sub-description",
+                ".update-components-actor__subtitle"
+            ]
+            
+            for selector in alt_desc_selectors:
+                desc_elem = post_container.select_one(selector)
+                if desc_elem:
+                    author_info["description"] = clean(desc_elem.get_text())
+                    # Remove "followers" text if present
+                    author_info["description"] = re.sub(r'\s*\d[\d,]*\s+followers.*$', '', author_info["description"])
+                    break
+
         # Try to find profile image with various selectors
         pic_selectors = [
             ".update-components-actor__avatar-image",
@@ -155,21 +183,18 @@ def clean_author_name(raw_name):
     # Remove duplicated names
     name_parts = name.split()
     if len(name_parts) >= 2:
-        # Check for exact duplications
         half_len = len(name_parts) // 2
         if name_parts[:half_len] == name_parts[half_len:]:
             name = " ".join(name_parts[:half_len])
     
-    # Another approach: check for duplicated name strings
     for length in range(len(name) // 2, 0, -1):
         if name[:length] == name[length:2*length]:
             return name[:length].strip()
     
-    # Handle patterns like "Name • Title"
+    # Remove any extra information after the name
     if '•' in name:
         name = name.split('•')[0].strip()
     
-    # Handle patterns like "Name at Company"
     if ' at ' in name:
         name = name.split(' at ')[0].strip()
     
@@ -177,7 +202,6 @@ def clean_author_name(raw_name):
 
 def extract_original_author_info(post_container):
     """Extract information about the original post author"""
-    # Find original author information in the actor container
     author_container = post_container.select_one(".update-components-actor__title span[dir='ltr']")
     author_name = ""
     
@@ -185,8 +209,6 @@ def extract_original_author_info(post_container):
         # Get raw text which might contain duplicated name
         raw_name = clean(author_container.get_text())
         
-        # Fix for duplicated name - several approaches
-        # 1. Try to extract name before any separator
         name_parts = re.split(r'•|\|', raw_name, 1)
         if len(name_parts) > 1:
             # There is a separator, take first part
@@ -228,13 +250,17 @@ def extract_original_author_info(post_container):
     
     # Create slug from author name
     slug = create_slug(author_name)
+
+    post_link = ""
+    link_container = post_container.select_one("a[data-control-name='view_post']")
+    if link_container and 'href' in link_container.attrs:
+        post_link = link_container.attrs['href']
     
     return {
         "name": author_name,
-        "followers": followers_count,
-        "date": post_date,
         "pic": pic_url,
-        "slug": slug
+        "slug": slug,
+        "link": post_link
     }
 
 def extract_post_description(post_container):
@@ -289,10 +315,12 @@ def extract_engagement(post_container):
     if likes_container:
         likes_text = clean(likes_container.get_text())
         try:
+            # Remove any commas before converting to int
+            likes_text = likes_text.replace(',', '')
             engagement["likes"] = int(likes_text)
         except ValueError:
             pass
-    
+
     # Extract comments
     comments_container = post_container.select_one("li.social-details-social-counts__comments button")
     if comments_container:
@@ -326,8 +354,22 @@ def is_repost(post_container):
 
 def extract_reposter_comment(post_container):
     """Extract any comment added by the reposter"""
-    # In most LinkedIn reposts, reposters don't add comments
-    return ""
+    reposter_comment = ""
+    
+    comment_container = post_container.select_one(".update-components-text[dir='ltr']")
+    
+    text_components = post_container.select(".update-components-text")
+    
+    if len(text_components) > 1:
+        # There's more than one text component, suggesting the first might be the reposter's comment
+        reposter_comment = clean(text_components[0].get_text())
+    elif comment_container:
+        # If there's only one text component but it's directly under the reposter's header,
+        header = post_container.select_one(".update-components-header")
+        if header:
+            reposter_comment = clean(comment_container.get_text())
+    
+    return reposter_comment
 
 def fix_duplicated_name(name):
     """Fix duplicated names like 'BindTuningBindTuning' to 'BindTuning'"""
@@ -376,6 +418,147 @@ def generate_post_slug(description):
     # Create slug
     return create_slug(slug_text)
 
+def is_video_content(post_container):
+    """Check if the post contains video content"""
+    # Look for video player elements
+    video_player = post_container.select_one(".update-components-linkedin-video")
+    if video_player:
+        return True
+        
+    # Alternative check for video content
+    video_js = post_container.select_one(".video-js")
+    if video_js:
+        return True
+    
+    # Look for specific video-related classes
+    video_classes = [
+        ".media-player",
+        ".vjs-tech",
+        ".video-s-loader"
+    ]
+    
+    for class_name in video_classes:
+        if post_container.select_one(class_name):
+            return True
+    
+    return False
+
+def extract_video_info(post_container):
+    """Extract information about the video"""
+    video_info = {"thumbnail": "", "duration": ""}
+    
+    # Try to get the video thumbnail
+    # Look for poster image in multiple locations
+    poster_elements = [
+        post_container.select_one(".vjs-poster"),
+        post_container.select_one(".vjs-poster-background"),
+        post_container.select_one(".media-player video[poster]")
+    ]
+    
+    for element in poster_elements:
+        if element:
+            if "style" in element.attrs:
+                style = element["style"]
+                url_match = re.search(r'url\("([^"]+)"\)', style)
+                if url_match:
+                    video_info["thumbnail"] = url_match.group(1)
+                    break
+            elif element.name == "video" and "poster" in element.attrs:
+                video_info["thumbnail"] = element["poster"]
+                break
+    
+    # Try to get video duration
+    duration_elements = [
+        post_container.select_one(".vjs-remaining-time-display"),
+        post_container.select_one(".video-duration"),
+        post_container.select_one(".media-player__duration")
+    ]
+    
+    for element in duration_elements:
+        if element:
+            duration_text = clean(element.get_text())
+            # Remove any minus sign
+            duration_text = duration_text.replace('-', '').strip()
+            if duration_text:
+                video_info["duration"] = duration_text
+                break
+    
+    return video_info
+
+def is_document_carousel(post_container):
+    """Check if the post contains a document carousel"""
+    # Check for the document-s-container class
+    if post_container.select_one(".document-s-container"):
+        return True
+    
+    # Check for the document container with specific class
+    if post_container.select_one(".update-components-document__container"):
+        return True
+    
+    # Check for document iframe
+    iframe = post_container.select_one("iframe[title*='Document player']")
+    if iframe:
+        return True
+    
+    return False
+
+def extract_document_info(post_container):
+    """Extract information about the document carousel"""
+    document_info = {
+        "type": "carousel",
+        "title": ""
+    }
+    
+    # Extract title from iframe
+    iframe = post_container.select_one("iframe[title*='Document player']")
+    if iframe and "title" in iframe.attrs:
+        title = iframe["title"]
+        # Clean up title if it has a prefix
+        if "Document player for:" in title:
+            title = title.replace("Document player for:", "").strip()
+        elif "Document player for" in title:
+            title = title.replace("Document player for", "").strip()
+        document_info["title"] = title
+    
+    # If no title from iframe, try other elements
+    if not document_info["title"]:
+        title_elem = post_container.select_one(".document-s-container__title, .update-components-document__title")
+        if title_elem:
+            document_info["title"] = clean(title_elem.get_text())
+    
+    return document_info
+
+# Create a function that handles media detection for all post types
+def extract_media_info(post_container):
+    """Extract media information from any post type"""
+    media = {}
+    
+    if is_video_content(post_container):
+        video_info = extract_video_info(post_container)
+        media = {
+            "type": "video",
+            "thumbnail": video_info.get("thumbnail", ""),
+            "duration": video_info.get("duration", "")
+        }
+    elif is_document_carousel(post_container):
+        document_info = extract_document_info(post_container)
+        media = {
+            "type": document_info["type"],
+            "title": document_info.get("title", ""),
+            "info": "Images not visible in the HTML" 
+        }
+    elif extract_images(post_container):
+        media = {
+            "type": "image",
+            "urls": extract_images(post_container)
+        }
+    else:
+        media = {
+            "type": "none"
+        }
+    
+    return media
+
 # Main processing function
 def process_posts(soup):
     posts = extract_posts(soup)
@@ -384,13 +567,9 @@ def process_posts(soup):
     for i, post_container in enumerate(posts):
         repost = is_repost(post_container)
         
-        # Get post content
+        # Common operations for both post types
         post_content = extract_post_description(post_container)
-        
-        # Get author info
         author_info = extract_author_info(post_container)
-        
-        # Get engagement metrics
         engagement = extract_engagement(post_container)
         
         # Get post date
@@ -407,53 +586,53 @@ def process_posts(soup):
         # Generate slug from content
         post_slug = generate_post_slug(post_content)
         
-        # Main image for the post
-        post_image = extract_images(post_container)[0] if extract_images(post_container) else ""
+        # Extract media - use the same function for both post types
+        media = extract_media_info(post_container)
         
         if repost:
             # Process as repost
-            post_description = extract_reposter_comment(post_container)
-            
-            # Get original author info
             original_author = extract_original_author_info(post_container)
-            
-            # Fix duplicated name
             if original_author["name"]:
                 original_author["name"] = fix_duplicated_name(original_author["name"])
+            
+            content_slug = generate_post_slug(post_content)
+            
+            # Check for reposter comment
+            reposter_comment = extract_reposter_comment(post_container)
+            has_reposter_comment = bool(reposter_comment)
             
             post = {
                 "id": BASE_ID + i,
                 "post_type": "repost",
                 "date": formatted_date,
-                "description": post_description,
-                "content": post_content,
-                "image": post_image,
-                "author": author_info,
-                "slug": post_slug,
-                "social_engament": {  
+                "author": author_info,  # The reposter
+                "social_engagement": {
                     "likes": engagement["likes"],
                     "comments": engagement["comments"],
                     "reposts": engagement["reposts"]
                 },
                 "original_post": {
                     "author": original_author,
-                    "description": post_content,
-                    "link": "",
-                    "images": extract_images(post_container)
+                    "content": post_content,
+                    "slug": content_slug,
+                    "media": media
                 }
             }
+            
+            if has_reposter_comment:
+                post["reposter_comment"] = reposter_comment
+                
         else:
-            # Process as regular post
+            # Regular post
             post = {
                 "id": BASE_ID + i,
                 "post_type": "post",
                 "date": formatted_date,
-                "description": post_content,
                 "content": post_content,
-                "image": post_image,
-                "author": author_info,
                 "slug": post_slug,
-                "social_engament": { 
+                "media": media,
+                "author": author_info,
+                "social_engagement": {  
                     "likes": engagement["likes"],
                     "comments": engagement["comments"],
                     "reposts": engagement["reposts"]
@@ -463,6 +642,7 @@ def process_posts(soup):
         results.append(post)
     
     return results
+
 
 # Load HTML and process
 try:
@@ -478,8 +658,8 @@ try:
             json.dump(post, f, indent=2, ensure_ascii=False)
     
     print(f"DONE: {len(posts)} JSONs saved in '{OUTPUT_DIR}/'")
-    sys.exit(0)  # Successful exit
+    sys.exit(0)
     
 except Exception as e:
     print(f"ERROR: {str(e)}")
-    sys.exit(1)  # Error exit
+    sys.exit(1)

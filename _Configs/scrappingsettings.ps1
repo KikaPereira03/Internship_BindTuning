@@ -6,7 +6,7 @@ $networkUri = "https://www.{0}.com/" -F $network
 $networkProfile = "{0}{1}" -F $networkUri, "in/"
 
 #Profiles to scrap
-$profileUsernames = @("danielando")
+$profileUsernames = @("danielando" , "techchirag")
 #, "techchirag", "rebeckaisaksson", "adisjugo", "bniaulin", "christianbuckley", "eshupps", "ericoverfield", "meetdux", "egorzon")
 # $profileUsernames = @("paulkeijzers-sharepoint-specialist-teams-expert", "kasnowicka", "lesley-crook", "joslat", "deborahashby", )
 
