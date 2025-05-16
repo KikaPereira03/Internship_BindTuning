@@ -49,6 +49,7 @@ do {
 
                 $mvpList = $mvpPageContainer.FindElementsByClassName("ms-Card")
                 $indexMvp = 0
+                $page = 1
                 
                 #foreach ($mvpItem in $mvpList) {
                 # iterate through the MVP list items
@@ -68,7 +69,7 @@ do {
                     $attemptLinkedIn = 0
                     $attemptLinkedInRetries = 10
                     
-                    Write-Host "Processing MVP item..." -ForegroundColor Green
+                    Write-Host "Processing MVP item on page $page..." -ForegroundColor Green
                     $mvpItem.Click()
                     Start-Sleep -Seconds 3
 
@@ -106,27 +107,34 @@ do {
 
                     # End of MVP items processing
                     if($indexMvp -eq $mvpList.Count) {
-                        Write-Host "Validation if they're more page to processing..." -ForegroundColor Yellow
-                        Start-Sleep -Seconds 5
-
-                        # Validate if are more pages to process
-                        $nextPage = $global:driver.FindElementsByXPath("//*[contains(@class, 'pagination')]/li[last()]")
-                        
-                        if($nextPage.GetAttribute("class") -eq "page-item disabled") {
-                            # No more pages to process
-                            Write-Host "No more pages to process." -ForegroundColor Orange
-                            $attemptCount = $maxRetries
-                        } else {
-                            # There are more pages to process
-                            Write-Host "Next page found. Proceeding to next page." -ForegroundColor Yellow
-                            $nextPage.Click()
-                            Start-Sleep -Seconds 5
+                        try {
                             
-                            # Reinitialize the MVP list
-                            $indexMvp = 0
-                            $mvpPageContainer = $global:driver.FindElementByXPath("//div[@class='sc-eFubAy enAppf']")
-                            $mvpList = $mvpPageContainer.FindElementsByClassName("ms-Card")
+                            Write-Host "Validation if they're more page to processing..." -ForegroundColor Yellow
+                            Start-Sleep -Seconds 5
+
+                            # Validate if are more pages to process
+                            $nextPage = $global:driver.FindElementsByXPath("//*[contains(@class, 'pagination')]/li[last()]")
+                            
+                            if($nextPage.GetAttribute("class") -eq "page-item disabled") {
+                                # No more pages to process
+                                Write-Host "No more pages to process." -ForegroundColor Magenta
+                                $attemptCount = $maxRetries
+                            } else {
+                                # There are more pages to process
+                                Write-Host "Next page found. Proceeding to next page." -ForegroundColor Yellow
+                                $nextPage.Click()
+                                Start-Sleep -Seconds 5
+                                
+                                # Reinitialize the MVP list
+                                $indexMvp = 0
+                                $mvpPageContainer = $global:driver.FindElementByXPath("//div[@class='sc-eFubAy enAppf']")
+                                $mvpList = $mvpPageContainer.FindElementsByClassName("ms-Card")
+                                $page++
+                            }
+                        } catch {
+                            Write-Host "Error with navigating to next page" -ForegroundColor Red
                         }
+                        
                     }
                 }
 
