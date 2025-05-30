@@ -45,6 +45,7 @@ function Get-Posts {
     $postElements = Extract-PostContainers -headers $headers
     Save-PostsToFile -posts $postElements -limit 10 -path $postsHtmlPath
 
+    $highestSeen = 0
     $highestSeen = Scan-VisiblePostNumbers
     if ($highestSeen -lt 10) {
         $highestSeen = Scroll-ToFindMorePosts -startFrom $highestSeen
@@ -68,7 +69,7 @@ function Navigate-ToPostsPage {
     Write-Host "Waiting 5 seconds for initial page load..." -ForegroundColor Gray
     Start-Sleep -Seconds 5
     
-    # CRITICAL FIX: Force setting maxRetries to ensure it's recognized
+    # Force setting maxRetries to ensure it's recognized
     if (-not $global:maxRetries -or $global:maxRetries -le 0) {
         $global:maxRetries = 20
         Write-Host "Reset maxRetries to 20" -ForegroundColor Yellow
@@ -247,7 +248,7 @@ function Scroll-ToFindMorePosts {
         [int]$highestSeen,
         [int]$maxScrolls = 3,
         [int]$maxChecks = 10,
-        [int]$targetPost = 10
+        [int]$targetPost = 11
     )
 
     $scrollAttempt = 0

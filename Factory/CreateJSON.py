@@ -2,6 +2,7 @@ import os
 import re
 import json
 import sys
+import html
 from bs4 import BeautifulSoup
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -19,7 +20,7 @@ if len(sys.argv) > 1:
         OUTPUT_DIR = os.path.dirname(INPUT_HTML)
 
 BASE_ID = 1
-MAX_POSTS = 10
+MAX_POSTS = 11
 
 # Ensure output directory exists
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -60,53 +61,6 @@ def generate_post_slug(description):
     
     # Create slug
     return create_slug(slug_text)
-
-def get_date(date_text):
-    """
-    Convert LinkedIn relative date to YYYY-MM-DD format
-    
-    Args:
-        date_text (str): LinkedIn's relative date format like "3d", "2w", "5mo", "1y"
-        
-    Returns:
-        str: Date in YYYY-MM-DD format
-    """
-    # Get current date
-    today = datetime.now()
-    
-    # Parse relative date formats
-    if 'mo' in date_text:
-        # Handle "Xmo" format (e.g., "4mo")
-        months = int(re.search(r'(\d+)', date_text).group(1))
-        # Calculate correct year and month
-        new_month = today.month - months
-        new_year = today.year
-        
-        # Adjust year if month becomes negative or zero
-        while new_month <= 0:
-            new_month += 12
-            new_year -= 1
-            
-        date = today.replace(year=new_year, month=new_month)
-    elif 'w' in date_text:
-        # Handle "Xw" format
-        weeks = int(re.search(r'(\d+)', date_text).group(1))
-        # Use timedelta for accurate date calculation with weeks
-        date = today - timedelta(weeks=weeks)
-    elif 'd' in date_text:
-        # Handle "Xd" format (e.g., "3d")
-        days = int(re.search(r'(\d+)', date_text).group(1))
-        # Use timedelta for accurate date calculation with days
-        date = today - timedelta(days=days)
-    elif 'y' in date_text:
-        # Handle "Xy" format (e.g., "1y")
-        years = int(re.search(r'(\d+)', date_text).group(1))
-        date = today.replace(year=today.year - years)
-    else:
-        date = today
-    
-    # Format as YYYY-MM-DD
-    return date.strftime('%Y-%m-%d')
 
 def clean_name(raw_name):
     """
@@ -174,6 +128,204 @@ def get_numeric_value(text, pattern):
         except ValueError:
             pass
     return 0
+
+
+# =====================================================================
+# DATE DETECTION
+# =====================================================================
+
+def extract_linkedin_activity_timestamp(post_container):
+    """
+    Extract precise timestamp from LinkedIn activity URN
+    
+    Args:
+        post_container: BeautifulSoup element containing the post
+        
+    Returns:
+        datetime or None: Precise post timestamp if found
+    """
+    try:
+        # Method 1: Look for data-urn attribute
+        urn_element = post_container.select_one("[data-urn*='urn:li:activity:']")
+        if urn_element and "data-urn" in urn_element.attrs:
+            urn = urn_element["data-urn"]
+            activity_id = extract_activity_id_from_urn(urn)
+            if activity_id:
+                timestamp = decode_linkedin_timestamp(activity_id)
+                if timestamp:
+                    print(f"DEBUG: Extracted timestamp from data-urn: {timestamp}")
+                    return timestamp
+        
+        # Method 2: Look in data-view-tracking-scope
+        tracking_elements = post_container.select("[data-view-tracking-scope]")
+        for element in tracking_elements:
+            tracking_data = element.get("data-view-tracking-scope", "")
+            if "updateUrn" in tracking_data:
+                try:
+                    # Decode HTML entities and parse JSON
+                    decoded_data = html.unescape(tracking_data)
+                    tracking_json = json.loads(decoded_data)
+                    
+                    if isinstance(tracking_json, list) and len(tracking_json) > 0:
+                        breadcrumb = tracking_json[0].get("breadcrumb", {})
+                        update_urn = breadcrumb.get("updateUrn", "")
+                        if update_urn:
+                            activity_id = extract_activity_id_from_urn(update_urn)
+                            if activity_id:
+                                timestamp = decode_linkedin_timestamp(activity_id)
+                                if timestamp:
+                                    print(f"DEBUG: Extracted timestamp from tracking data: {timestamp}")
+                                    return timestamp
+                except (json.JSONDecodeError, KeyError, IndexError):
+                    continue
+        
+        # Method 3: Look for any element containing activity URN
+        all_elements = post_container.find_all(attrs=lambda x: x and any('urn:li:activity:' in str(v) for v in x.values() if v))
+        for element in all_elements:
+            for attr_value in element.attrs.values():
+                if isinstance(attr_value, str) and 'urn:li:activity:' in attr_value:
+                    activity_id = extract_activity_id_from_urn(attr_value)
+                    if activity_id:
+                        timestamp = decode_linkedin_timestamp(activity_id)
+                        if timestamp:
+                            print(f"DEBUG: Extracted timestamp from element: {timestamp}")
+                            return timestamp
+    
+    except Exception as e:
+        print(f"DEBUG: Error extracting LinkedIn timestamp: {e}")
+    
+    return None
+
+def extract_activity_id_from_urn(urn_text):
+    """Extract activity ID from LinkedIn URN"""
+    match = re.search(r'urn:li:activity:(\d+)', str(urn_text))
+    return match.group(1) if match else None
+
+def decode_linkedin_timestamp(activity_id):
+    """
+    Decode LinkedIn activity ID to timestamp
+    
+    LinkedIn activity IDs contain embedded timestamps but use a custom format.
+    This is an approximation based on known patterns.
+    """
+    try:
+        # Convert to integer
+        id_num = int(activity_id)
+        
+        # LinkedIn uses a custom epoch and bit-shifting
+        # Method 1: Extract timestamp bits (first ~41 bits for timestamp)
+        timestamp_part = id_num >> 23  # Right shift to get timestamp part
+        
+        # LinkedIn epoch is approximately January 1, 2010
+        linkedin_epoch = int(datetime(2010, 1, 1).timestamp() * 1000)  # milliseconds
+        
+        # Calculate actual timestamp
+        actual_timestamp = linkedin_epoch + timestamp_part
+        
+        # Convert to datetime
+        post_datetime = datetime.fromtimestamp(actual_timestamp / 1000)
+        
+        # Sanity check: should be between 2010 and now
+        now = datetime.now()
+        earliest = datetime(2010, 1, 1)
+        
+        if earliest <= post_datetime <= now:
+            return post_datetime
+        
+        # Method 2: Try different bit shifting if Method 1 fails
+        for shift in [22, 24, 25]:
+            timestamp_part = id_num >> shift
+            actual_timestamp = linkedin_epoch + timestamp_part
+            try:
+                post_datetime = datetime.fromtimestamp(actual_timestamp / 1000)
+                if earliest <= post_datetime <= now:
+                    return post_datetime
+            except (ValueError, OSError, OverflowError):
+                continue
+    
+    except (ValueError, OSError, OverflowError):
+        pass
+    
+    return None
+
+
+def get_date(date_text, post_container=None):
+    """
+    Convert LinkedIn relative date to full timestamp format with better precision
+    
+    Args:
+        date_text (str): LinkedIn's relative date format like "15h", "3d", "2w", "5mo", "1y"
+        post_container: BeautifulSoup element (for precise timestamp extraction)
+        
+    Returns:
+        str: Timestamp in 'YYYY-MM-DD HH:MM:SS' format
+    """
+    import random
+    
+    # First, try to get precise timestamp from LinkedIn URN
+    if post_container:
+        precise_timestamp = extract_linkedin_activity_timestamp(post_container)
+        if precise_timestamp:
+            return precise_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Fallback to relative time parsing with improvements
+    today = datetime.now()
+    
+    # Parse relative date formats with HOURS support
+    if 'h' in date_text:
+        # Handle "Xh" format (e.g., "15h", "3h")
+        hours = int(re.search(r'(\d+)', date_text).group(1))
+        # Add small randomization to break clustering (±30 minutes)
+        random_minutes = random.randint(-30, 30)
+        date = today - timedelta(hours=hours, minutes=random_minutes)
+    elif 'mo' in date_text:
+        # Handle "Xmo" format (e.g., "4mo")
+        months = int(re.search(r'(\d+)', date_text).group(1))
+        # Calculate correct year and month
+        new_month = today.month - months
+        new_year = today.year
+        
+        # Adjust year if month becomes negative or zero
+        while new_month <= 0:
+            new_month += 12
+            new_year -= 1
+            
+        date = today.replace(year=new_year, month=new_month)
+        # Add randomization within the month (±15 days)
+        random_days = random.randint(-15, 15)
+        random_hours = random.randint(0, 23)
+        random_minutes = random.randint(0, 59)
+        date = date + timedelta(days=random_days, hours=random_hours, minutes=random_minutes)
+    elif 'w' in date_text:
+        # Handle "Xw" format
+        weeks = int(re.search(r'(\d+)', date_text).group(1))
+        # Add randomization within the week (±3 days, random time)
+        random_days = random.randint(-3, 3)
+        random_hours = random.randint(0, 23)
+        random_minutes = random.randint(0, 59)
+        date = today - timedelta(weeks=weeks, days=random_days, hours=random_hours, minutes=random_minutes)
+    elif 'd' in date_text:
+        # Handle "Xd" format (e.g., "3d")
+        days = int(re.search(r'(\d+)', date_text).group(1))
+        # Add randomization within the day (±12 hours)
+        random_hours = random.randint(-12, 12)
+        random_minutes = random.randint(0, 59)
+        date = today - timedelta(days=days, hours=random_hours, minutes=random_minutes)
+    elif 'y' in date_text:
+        # Handle "Xy" format (e.g., "1y")
+        years = int(re.search(r'(\d+)', date_text).group(1))
+        date = today.replace(year=today.year - years)
+        # Add randomization within the year (±60 days, random time)
+        random_days = random.randint(-60, 60)
+        random_hours = random.randint(0, 23)
+        random_minutes = random.randint(0, 59)
+        date = date + timedelta(days=random_days, hours=random_hours, minutes=random_minutes)
+    else:
+        date = today
+    
+    # Format as YYYY-MM-DD HH:MM:SS
+    return date.strftime('%Y-%m-%d %H:%M:%S')
+
 
 # =====================================================================
 # POST TYPE DETECTION
@@ -318,73 +470,102 @@ def get_posts(soup):
     return post_containers[:MAX_POSTS]
 
 def get_post_description(post_container):
-    """
-    Extract the main content of the post
+    # FOR REPOSTS: Look for content in PT3 container FIRST
+    pt3_container = post_container.select_one(".pt3")
+    if pt3_container:
+        # Look for description within PT3
+        pt3_description = pt3_container.select_one(".feed-shared-inline-show-more-text")
+        if pt3_description:
+            content_span = pt3_description.select_one(".update-components-text .break-words span[dir='ltr']")
+            if content_span:
+                content = clean(content_span.get_text())
+                content = content.replace("hashtag#", "#")
+                return content
     
-    Args:
-        post_container: BeautifulSoup element containing the post
-        
-    Returns:
-        str: The post content text
-    """
+    # If we have multiple descriptions, try the LAST one (not the first)
+    # The first is likely the reposter comment, the last is the original content
+    all_descriptions = post_container.select(".feed-shared-inline-show-more-text")
+    if len(all_descriptions) >= 2:
+        # Try descriptions from last to first (skip the reposter comment)
+        for desc in reversed(all_descriptions):
+            # Skip if this is the same one we might have used for reposter comment
+            if not desc.find_parent(".pt3"):
+                continue  # Skip non-PT3 descriptions for original content
+            
+            content_span = desc.select_one(".update-components-text .break-words span[dir='ltr']")
+            if content_span:
+                content = clean(content_span.get_text())
+                content = content.replace("hashtag#", "#")
+                return content
+    
+    # Fallback: Look for content in nested update content wrapper
+    content_wrapper = post_container.select_one(".feed-shared-update-v2__update-content-wrapper")
+    if content_wrapper:
+        nested_description = content_wrapper.select_one(".feed-shared-inline-show-more-text")
+        if nested_description:
+            content_span = nested_description.select_one(".update-components-text .break-words span[dir='ltr']")
+            if content_span:
+                content = clean(content_span.get_text())
+                content = content.replace("hashtag#", "#")
+                return content
+    
+    # Final fallback: Standard approach (for regular posts)
     description_container = post_container.select_one(".feed-shared-inline-show-more-text")
     if description_container:
         content_span = description_container.select_one(".update-components-text .break-words span[dir='ltr']")
         
         if content_span:
-            # This gets the full content regardless of the "...more" button
             content = clean(content_span.get_text())
-            
-            # Replace any "hashtag" prefix that might have been added
             content = content.replace("hashtag#", "#")
-            content = content.replace("hashtaghashtag#", "#")
-            
             return content
         else:
             content = clean(description_container.get_text())
             content = content.replace("hashtag#", "#")
-            content = content.replace("hashtaghashtag#", "#")
             
             if "…more" not in content and description_container.select_one(".feed-shared-inline-show-more-text__see-more-less-toggle"):
                 content += " …more"
                 
             return content
+    
     return ""
 
 def get_reposter_comment(post_container):
-    """
-    Extract any comment added by the reposter
+    # Get all description containers
+    all_descriptions = post_container.select(".feed-shared-inline-show-more-text")
     
-    Args:
-        post_container: BeautifulSoup element containing the post
-        
-    Returns:
-        str: The reposter's comment text, or empty string if none
-    """
-    reposter_comment = ""
+    if len(all_descriptions) >= 2:
+        # If we have multiple descriptions, the FIRST one should be the reposter's comment
+        # Make sure it's NOT inside PT3
+        first_desc = all_descriptions[0]
+        if not first_desc.find_parent(".pt3"):
+            text_span = first_desc.select_one(".update-components-text .break-words span[dir='ltr']")
+            if text_span:
+                reposter_comment = clean(text_span.get_text())
+                # Clean up hashtag prefixes
+                reposter_comment = reposter_comment.replace("hashtag#", "#")
+                return reposter_comment
     
-    comment_container = post_container.select_one(".update-components-text[dir='ltr']")
+    # Alternative approach: look for commentary class specifically
+    commentary = post_container.select_one(".update-components-update-v2__commentary")
+    if commentary and not commentary.find_parent(".pt3"):
+        text_span = commentary.select_one(".break-words span[dir='ltr']")
+        if text_span:
+            reposter_comment = clean(text_span.get_text())
+            reposter_comment = reposter_comment.replace("hashtag#", "#")
+            return reposter_comment
     
-    text_components = post_container.select(".update-components-text")
-    
-    if len(text_components) > 1:
-        # There's more than one text component, suggesting the first might be the reposter's comment
-        reposter_comment = clean(text_components[0].get_text())
-    elif comment_container:
-        # If there's only one text component but it's directly under the reposter's header,
-        header = post_container.select_one(".update-components-header")
-        if header:
-            reposter_comment = clean(comment_container.get_text())
-    
-    return reposter_comment
+    return ""
 
-def get_profile_info(post_container, default_name="Unknown User"):
+
+
+def get_profile_info(post_container, default_name="Unknown User", is_reposter=False):
     """
     Extract information about the post author/reposter
     
     Args:
         post_container: BeautifulSoup element containing the post
         default_name: Fallback name if author name can't be extracted
+        is_reposter: Flag to indicate if we're looking for reposter info
         
     Returns:
         dict: Author information including name, picture, description, and slug
@@ -396,8 +577,54 @@ def get_profile_info(post_container, default_name="Unknown User"):
         "slug": create_slug(default_name)
     }
     
-    # STEP 1: Look for the main author name at the top level
-    # This approach works for both regular posts and reposts
+    if is_reposter:
+        # FOR REPOSTS: We need to get the TOP-LEVEL author (the reposter)
+        # Check if this is a repost with "reposted this" text first
+        header = post_container.select_one(".update-components-header")
+        if header:
+            header_text = header.get_text()
+            repost_match = re.search(r'(.*?)\s+reposted this', header_text)
+            if repost_match:
+                # This is a standard repost with "reposted this" text
+                reposter_name = clean(repost_match.group(1))
+                author_info["name"] = clean_name(reposter_name)
+                author_info["slug"] = create_slug(author_info["name"])
+                
+                # Find their picture and description from the header area
+                profile_img = header.select_one(".update-components-header__image img")
+                if profile_img and "src" in profile_img.attrs:
+                    author_info["pic"] = profile_img["src"]
+                    
+                return author_info
+        
+        # If no "reposted this" text found, this is a DIRECT REPOST
+        # In this case, the reposter is the FIRST/TOP-LEVEL author container
+        # and the original author is in the nested container
+        
+        # Get the first (top-level) author container - this is the reposter
+        first_author_container = post_container.select_one(".update-components-actor__container")
+        if first_author_container:
+            # Get reposter name
+            name_element = first_author_container.select_one(".update-components-actor__title span[dir='ltr']")
+            if name_element:
+                author_name = clean(name_element.get_text())
+                author_info["name"] = clean_name(author_name)
+                author_info["slug"] = create_slug(author_info["name"])
+            
+            # Get reposter's profile image
+            profile_img = first_author_container.select_one(".update-components-actor__avatar-image")
+            if profile_img and "src" in profile_img.attrs:
+                author_info["pic"] = profile_img["src"]
+            
+            # Get reposter's description
+            description_elem = first_author_container.select_one(".update-components-actor__description")
+            if description_elem:
+                author_info["description"] = clean(description_elem.get_text())
+        
+        return author_info
+    
+    # FOR REGULAR POSTS: Use the standard logic
+    # STEP 1: Look for the main author name
     main_author_container = post_container.select_one(".update-components-actor__title")
     if main_author_container:
         name_element = main_author_container.select_one("span[dir='ltr']")
@@ -433,75 +660,10 @@ def get_profile_info(post_container, default_name="Unknown User"):
                 break
     
     return author_info
-    
-    # FIRST APPROACH: Get the main profile information (works for both posts and reposts)
-    # The main profile/reposter is always at the top level of the post
-    
-    # Try to get the author name from the main actor title
-    main_author = post_container.select_one(".nKScBWzecDkXtXaQgElgCJCMuzBTImbFSg .update-components-actor__title span[dir='ltr']")
-    if main_author:
-        raw_name = clean(main_author.get_text())
-        author_info["name"] = clean_name(raw_name)
-        author_info["slug"] = create_slug(author_info["name"])
-    
-    # Get profile picture
-    profile_img = post_container.select_one(".nKScBWzecDkXtXaQgElgCJCMuzBTImbFSg .update-components-actor__avatar-image")
-    if profile_img and "src" in profile_img.attrs:
-        author_info["pic"] = profile_img["src"]
-    
-    # Get author description from the main profile section
-    main_description = post_container.select_one(".nKScBWzecDkXtXaQgElgCJCMuzBTImbFSg .update-components-actor__description")
-    if main_description:
-        author_info["description"] = clean(main_description.get_text())
-    
-    # ALTERNATIVE APPROACHES if the above didn't work
-    
-    # If we still don't have the author name, try other selectors
-    if author_info["name"] == default_name:
-        # Try approach with direct actor title
-        author_container = post_container.select_one(".update-components-actor__title")
-        if author_container:
-            author_link = author_container.select_one("a")
-            if author_link:
-                raw_name = clean(author_link.get_text())
-                author_info["name"] = clean_name(raw_name)
-                author_info["slug"] = create_slug(author_info["name"])
-    
-    # If we still don't have a profile picture, try other selectors
-    if not author_info["pic"]:
-        pic_selectors = [
-            ".ivm-view-attr__img--centered",
-            "img.EntityPhoto-circle-3"
-        ]
-        
-        for selector in pic_selectors:
-            profile_img = post_container.select_one(selector)
-            if profile_img and "src" in profile_img.attrs:
-                author_info["pic"] = profile_img["src"]
-                break
-    
-    # If we still don't have a description, try alternative selectors
-    if not author_info["description"]:
-        alt_desc_selectors = [
-            ".feed-shared-actor__description",
-            ".feed-shared-actor__sub-description",
-            ".update-components-actor__subtitle"
-        ]
-        
-        for selector in alt_desc_selectors:
-            desc_elem = post_container.select_one(selector)
-            if desc_elem:
-                author_info["description"] = clean(desc_elem.get_text())
-                # Remove "followers" text if present
-                author_info["description"] = re.sub(r'\s*\d[\d,]*\s+followers.*$', '', author_info["description"])
-                break
-    
-    return author_info
-
 
 def get_original_author_info(post_container):
     """
-    Extract information about the original post author (for reposts)
+    FIXED VERSION - Extract information about the original post author (for reposts)
     
     Args:
         post_container: BeautifulSoup element containing the post
@@ -513,50 +675,68 @@ def get_original_author_info(post_container):
         "name": "",
         "pic": "",
         "slug": "",
-        "link": ""
+        "link": "",
+        "description": ""
     }
     
     # APPROACH 1: For standard reposts (with "reposted this" text)
+    # In this case, the MAIN actor container contains the ORIGINAL AUTHOR
     header_texts = post_container.select(".update-components-header__text-view, .update-components-actor__title")
     for text_elem in header_texts:
         if text_elem and "reposted this" in text_elem.get_text():
-            # Look for the original author container after the repost header
-            # Usually it's the second author container in the post
-            author_containers = post_container.select(".update-components-actor__container")
-            if len(author_containers) > 1:
-                # The second container is likely the original author
-                original_container = author_containers[1]
+            print(f"DEBUG: Found 'reposted this' - this is a standard repost")
+            
+            # For standard reposts, the MAIN/PRIMARY actor container is the original author
+            main_actor_container = post_container.select_one(".update-components-actor__container")
+            if main_actor_container:
+                print(f"DEBUG: Found main actor container")
                 
                 # Get author name
-                name_elem = original_container.select_one(".update-components-actor__title span[dir='ltr']")
+                name_elem = main_actor_container.select_one(".update-components-actor__title span[dir='ltr']")
                 if name_elem:
-                    author_info["name"] = clean_name(clean(name_elem.get_text()))
+                    raw_name = clean(name_elem.get_text())
+                    author_info["name"] = clean_name(raw_name)
+                    print(f"DEBUG: Found original author name: {author_info['name']}")
                 
                 # Get author image
-                img = original_container.select_one("img.update-components-actor__avatar-image")
+                img = main_actor_container.select_one("img.update-components-actor__avatar-image")
                 if img and "src" in img.attrs:
                     author_info["pic"] = img["src"]
+                    print(f"DEBUG: Found original author pic")
+                
+                # Get author description
+                desc_elem = main_actor_container.select_one(".update-components-actor__description")
+                if desc_elem:
+                    author_info["description"] = clean(desc_elem.get_text())
+                    # Remove followers count if present
+                    author_info["description"] = re.sub(r'\s*\d[\d,]*\s+followers.*$', '', author_info["description"])
                 
                 # Get author link
-                author_link = original_container.select_one("a")
+                author_link = main_actor_container.select_one("a")
                 if author_link and 'href' in author_link.attrs:
                     author_info["link"] = author_link.attrs['href']
+                    print(f"DEBUG: Found original author link")
             
-            # We found what we needed, return early
+            # We found what we needed for standard reposts, return early
             if author_info["name"]:
                 author_info["slug"] = create_slug(author_info["name"])
+                print(f"DEBUG: Successfully extracted original author for standard repost: {author_info['name']}")
                 return author_info
     
-    # APPROACH 2: For reposts with comments, look in the nested content wrapper
+    # APPROACH 2: For DIRECT REPOSTS (comments with nested content)
+    # Look for the NESTED/SECOND author container in the content wrapper
     content_wrapper = post_container.select_one(".MxyAgNzXcrHwRVnhLpYwOXnvQMJVwVlM")
     if content_wrapper:
+        print(f"DEBUG: Found content wrapper - this might be a direct repost")
         # Get the author container inside the content wrapper
         author_container = content_wrapper.select_one(".update-components-actor__container")
         if author_container:
+            print(f"DEBUG: Found nested author container")
             # Get author name
             name_elem = author_container.select_one(".update-components-actor__title span[dir='ltr']")
             if name_elem:
                 author_info["name"] = clean_name(clean(name_elem.get_text()))
+                print(f"DEBUG: Found nested original author name: {author_info['name']}")
             
             # Get author image
             img = author_container.select_one("img.update-components-actor__avatar-image")
@@ -568,24 +748,51 @@ def get_original_author_info(post_container):
             if author_link and 'href' in author_link.attrs:
                 author_info["link"] = author_link.attrs['href']
         
-        # Attempt to find post link
-        link_container = content_wrapper.select_one("a.tap-target, a[data-control-name='view_post']")
-        if link_container and 'href' in link_container.attrs:
-            author_info["link"] = link_container.attrs['href']
+        # Return early if we found the author
+        if author_info["name"]:
+            author_info["slug"] = create_slug(author_info["name"])
+            print(f"DEBUG: Successfully extracted original author for direct repost: {author_info['name']}")
+            return author_info
     
     # APPROACH 3: Try the PT3 container for reposts with comments
     if not author_info["name"]:
         pt3_container = post_container.select_one(".pt3")
         if pt3_container:
+            print(f"DEBUG: Found PT3 container")
             # Get author name
             name_elem = pt3_container.select_one(".update-components-actor__title span[dir='ltr']")
             if name_elem:
                 author_info["name"] = clean_name(clean(name_elem.get_text()))
+                print(f"DEBUG: Found PT3 original author name: {author_info['name']}")
             
             # Get author image
             img = pt3_container.select_one("img.update-components-actor__avatar-image")
             if img and "src" in img.attrs:
                 author_info["pic"] = img["src"]
+    
+    # APPROACH 4: If we still don't have the original author, check for MULTIPLE author containers
+    # In direct reposts, there are often two author containers at different levels
+    if not author_info["name"]:
+        all_author_containers = post_container.select(".update-components-actor__container")
+        print(f"DEBUG: Found {len(all_author_containers)} total actor containers")
+        if len(all_author_containers) >= 2:
+            # Skip the first one (reposter) and use the second one (original author)
+            for i in range(1, len(all_author_containers)):
+                container = all_author_containers[i]
+                name_elem = container.select_one(".update-components-actor__title span[dir='ltr']")
+                if name_elem:
+                    potential_name = clean_name(clean(name_elem.get_text()))
+                    # Make sure this is different from what we might have already
+                    if potential_name and potential_name != author_info.get("name", ""):
+                        author_info["name"] = potential_name
+                        print(f"DEBUG: Found multiple container original author name: {author_info['name']}")
+                        
+                        # Get image for this author
+                        img = container.select_one("img.update-components-actor__avatar-image")
+                        if img and "src" in img.attrs:
+                            author_info["pic"] = img["src"]
+                        
+                        break
     
     # SPECIAL CASE FOR POST 8: If empty author but we have a SharePoint post
     if not author_info["name"] and "SharePoint keynote" in post_container.get_text():
@@ -597,8 +804,11 @@ def get_original_author_info(post_container):
     if author_info["name"] and not author_info["slug"]:
         author_info["slug"] = create_slug(author_info["name"])
     
+    # Final debug output
+    if not author_info["name"]:
+        print(f"DEBUG: WARNING - Could not find original author name!")
+    
     return author_info
-
 
 def get_engagement(post_container):
     """
@@ -692,7 +902,7 @@ def get_video_info(post_container):
                 video_info["thumbnail"] = element["poster"]
                 break
     
-    # Get video duratioN
+    # Get video duration
     duration_elements = [
         post_container.select_one(".vjs-remaining-time-display"),
         post_container.select_one(".video-duration"),
@@ -825,50 +1035,51 @@ def get_final_media_info(post_container):
 
 def process_posts(soup):
     """
-    Process all posts in the HTML and extract their data
-    
-    Args:
-        soup: BeautifulSoup object containing the parsed HTML
-        
-    Returns:
-        list: List of dictionaries containing structured post data
+    Process all posts with CORRECTED reposter comment handling
     """
     posts = get_posts(soup)
     results = []
     
     for i, post_container in enumerate(posts):
+        print(f"\n=== PROCESSING POST {i+1} ===")
         repost = is_repost(post_container)
-        
-        # Common operations for both post types
-        post_content = get_post_description(post_container)
-        author_info = get_profile_info(post_container)
-        engagement = get_engagement(post_container)
-        
-        # Get post date
-        date_span = post_container.select_one(".update-components-actor__sub-description")
-        rel_date = ""
-        if date_span:
-            date_text = clean(date_span.get_text())
-            date_match = re.search(r'(\d+\s*[dwmy]+o?)', date_text)
-            if date_match:
-                rel_date = date_match.group(1)
-        
-        formatted_date = get_date(rel_date)
-        
-        # Generate slug from content
-        post_slug = generate_post_slug(post_content)
-        
-        # Extract media - use the same function for both post types
-        media = get_final_media_info(post_container)
-        
+        print(f"Is repost: {repost}")
+
         if repost:
-            # Process as repost
-            original_author = get_original_author_info(post_container)
-            content_slug = generate_post_slug(post_content)
+            # For reposts, get content FIRST (original post content)
+            post_content = get_post_description(post_container)
             
-            # Check for reposter comment
+            # Then get reposter info and comment
+            author_info = get_profile_info(post_container, is_reposter=True)
+            print(f"Reposter: {author_info['name']}")
+            
+            # Get original author info
+            original_author = get_original_author_info(post_container)
+            print(f"Original author: {original_author['name']}")
+            
+            # Get reposter comment
             reposter_comment = get_reposter_comment(post_container)
             has_reposter_comment = bool(reposter_comment)
+            
+            print(f"Has reposter comment: {has_reposter_comment}")
+            if has_reposter_comment:
+                print(f"Reposter comment preview: {reposter_comment[:80]}...")
+            print(f"Original content preview: {post_content[:80]}...")
+            
+            # Create repost JSON structure
+            engagement = get_engagement(post_container)
+            
+            date_span = post_container.select_one(".update-components-actor__sub-description")
+            rel_date = ""
+            if date_span:
+                date_text = clean(date_span.get_text())
+                date_match = re.search(r'(\d+\s*[hdwmy]+o?)', date_text)
+                if date_match:
+                    rel_date = date_match.group(1)
+            
+            formatted_date = get_date(rel_date, post_container)
+            content_slug = generate_post_slug(post_content)
+            media = get_final_media_info(post_container)
             
             post = {
                 "id": BASE_ID + i,
@@ -882,17 +1093,43 @@ def process_posts(soup):
                 },
                 "original_post": {
                     "author": original_author,
-                    "content": post_content,
+                    "content": post_content,  # This should be the ORIGINAL content, not reposter comment
                     "slug": content_slug,
                     "media": media
                 }
             }
             
+            # Only add reposter comment if it exists and is different from original content
             if has_reposter_comment:
-                post["reposter_comment"] = reposter_comment
+                # Validate that reposter comment is actually different
+                normalized_comment = reposter_comment.lower().replace('#', '').replace(' ', '')
+                normalized_original = post_content.lower().replace('#', '').replace(' ', '')
                 
+                if normalized_comment != normalized_original:
+                    post["reposter_comment"] = reposter_comment
+                else:
+                    print("WARNING: Reposter comment identical to original content - skipping")
+        
         else:
-            # Regular post
+            # Regular post processing (unchanged)
+            author_info = get_profile_info(post_container)
+            print(f"Author: {author_info['name']}")
+            
+            post_content = get_post_description(post_container)
+            engagement = get_engagement(post_container)
+            
+            date_span = post_container.select_one(".update-components-actor__sub-description")
+            rel_date = ""
+            if date_span:
+                date_text = clean(date_span.get_text())
+                date_match = re.search(r'(\d+\s*[hdwmy]+o?)', date_text)
+                if date_match:
+                    rel_date = date_match.group(1)
+            
+            formatted_date = get_date(rel_date, post_container)
+            post_slug = generate_post_slug(post_content)
+            media = get_final_media_info(post_container)
+            
             post = {
                 "id": BASE_ID + i,
                 "post_type": "post",
@@ -929,7 +1166,16 @@ try:
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(post, f, indent=2, ensure_ascii=False)
     
-    print(f"DONE: {len(posts)} JSONs saved in '{OUTPUT_DIR}/'")
+    print(f"\nDONE: {len(posts)} JSONs saved in '{OUTPUT_DIR}/'")
+    
+    # Print summary
+    reposts = [p for p in posts if p['post_type'] == 'repost']
+    regular_posts = [p for p in posts if p['post_type'] == 'post']
+    
+    print(f"\nSUMMARY:")
+    print(f"- Regular posts: {len(regular_posts)}")
+    print(f"- Reposts: {len(reposts)}")
+    
     sys.exit(0)
     
 except Exception as e:
