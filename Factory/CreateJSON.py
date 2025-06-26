@@ -8,144 +8,206 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 # =====================================================================
-# SCRIPT SETUP
+# SCRIPT SETUP AND CONFIGURATION
 # =====================================================================
+
+print("LINKEDIN POST PROCESSOR - HTML TO JSON CONVERTER")
+print("=" * 70)
 
 if len(sys.argv) > 1:
     INPUT_HTML = sys.argv[1]
+    print(f"Input HTML file: {INPUT_HTML}")
+    
     if len(sys.argv) > 2:
         OUTPUT_DIR = sys.argv[2]
+        print(f"Output directory: {OUTPUT_DIR}")
     else:
         # Default to the same directory as the input file
         OUTPUT_DIR = os.path.dirname(INPUT_HTML)
+        print(f"Output directory (default): {OUTPUT_DIR}")
+else:
+    print("ERROR: No input HTML file provided")
+    print("Usage: python CreateJSON.py <input_html_file> [output_directory]")
+    sys.exit(1)
 
+# Processing configuration
 BASE_ID = 1
 MAX_POSTS = 11
 
+print(f"Base ID for posts: {BASE_ID}")
+print(f"Maximum posts to process: {MAX_POSTS}")
+
 # Ensure output directory exists
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-# Print info at start
-print(f"Reading HTML from: {INPUT_HTML}")
-print(f"Saving JSONs to: {OUTPUT_DIR}")
+print(f"Output directory verified/created: {OUTPUT_DIR}")
+print("=" * 70)
 
 # =====================================================================
 # UTILITY FUNCTIONS - Basic helper functions used throughout the script
 # =====================================================================
 
 def clean(text):
-    """Clean text by removing extra whitespace"""
+    """
+    Clean text by removing extra whitespace and normalizing formatting
+    
+    Args:
+        text (str): Raw text to clean
+        
+    Returns:
+        str: Cleaned text with normalized spacing
+    """
+    if not text:
+        return ""
     return re.sub(r'\s+', ' ', text).strip()
 
 def create_slug(text):
-    """Create a URL-friendly slug from text"""
+    """
+    Create a URL-friendly slug from text for database/file naming
+    
+    Args:
+        text (str): Original text to convert
+        
+    Returns:
+        str: URL-friendly slug (lowercase, hyphens, no special chars)
+    """
     if not text:
         return ""
-    # Convert to lowercase
+    # Convert to lowercase and replace non-alphanumeric with hyphens
     text = text.lower()
-    # Replace non-alphanumeric characters with hyphens
     text = re.sub(r'[^a-z0-9]+', '-', text)
-    # Remove leading/trailing hyphens
+    # Remove leading/trailing hyphens and limit length
     text = text.strip('-')
-    # Limit length
     return text[:400]
 
 def generate_post_slug(description):
-    """Generate a URL-friendly slug from the post description"""
+    """
+    Generate a URL-friendly slug from the post description (first 8 words)
+    
+    Args:
+        description (str): Post content description
+        
+    Returns:
+        str: Generated slug for the post
+    """
     if not description:
         return ""
     
-    # Take first few words
+    # Take first 8 words for slug generation
     words = description.split()[:8]
     slug_text = " ".join(words)
     
-    # Create slug
     return create_slug(slug_text)
 
 def clean_name(raw_name):
     """
-    Clean name by removing duplications and extra information
+    Advanced name cleaning to remove duplications and extra profile information
+    
+    This function handles several LinkedIn-specific name formatting issues:
+    1. Exact duplications where name appears twice
+    2. Repeated word patterns 
+    3. Extra information after bullets/pipes
+    4. Job title contamination
     
     Args:
-        raw_name (str): The raw name that might contain duplications or extra information
+        raw_name (str): Raw name that might contain duplications or extra info
         
     Returns:
-        str: Cleaned name
+        str: Cleaned and normalized name
     """
     if not raw_name:
         return ""
     
     name = raw_name
     
-    # Step 1: Remove any information after bullets, pipes, etc.
+    print(f"DEBUG: Cleaning name - Input: '{raw_name}'")
+    
+    # STEP 1: Remove information after bullets, pipes, or 'at' keywords
     name = re.sub(r'\s+[•|]\s+.*$', '', name)
     
-    # Step 2: Check for exact duplications where the first half equals the second half
+    # STEP 2: Check for exact string duplications (first half = second half)
     length = len(name)
     half_length = length // 2
     if length % 2 == 0 and name[:half_length] == name[half_length:]:
         name = name[:half_length]
+        print(f"DEBUG: Removed exact duplication from name: {raw_name} -> {name}")
     
-    # Step 3: Check for repeated words pattern like "John Smith John Smith"
+    # STEP 3: Check for repeated word patterns like "John Smith John Smith"
     words = name.split()
     if len(words) >= 2:
         half_count = len(words) // 2
         if words[:half_count] == words[half_count:]:
             name = " ".join(words[:half_count])
+            print(f"DEBUG: Removed word pattern duplication: {raw_name} -> {name}")
     
-    # Step 4: Use regex for more complex duplicated patterns
+    # STEP 4: Use regex for complex duplicated patterns
     duplicate_pattern = r'^(.+?)\1+$'
     match = re.match(duplicate_pattern, name)
     if match:
         name = match.group(1)
+        print(f"DEBUG: Removed regex pattern duplication: {raw_name} -> {name}")
     
-    # Step 5: Remove specific patterns
+    # STEP 5: Remove specific LinkedIn profile contamination
     if '•' in name:
         name = name.split('•')[0].strip()
     
     if ' at ' in name:
         name = name.split(' at ')[0].strip()
     
-    return name.strip()
+    cleaned_name = name.strip()
+    if cleaned_name != raw_name:
+        print(f"DEBUG: Name cleaning result: '{raw_name}' -> '{cleaned_name}'")
+    
+    return cleaned_name
 
 def get_numeric_value(text, pattern):
     """
-    Extract a numeric value from text using regex pattern
+    Extract numeric values from text using regex patterns
+    
+    Used for extracting engagement metrics (likes, comments, reposts)
     
     Args:
-        text (str): The text containing numeric values
+        text (str): Text containing numeric values
         pattern (str): Regex pattern to extract the number
         
     Returns:
-        int: Extracted numeric value or 0 if not found
+        int: Extracted numeric value or 0 if not found/invalid
     """
     if not text:
         return 0
+    
     match = re.search(pattern, text)
     if match:
         try:
-            return int(match.group(1).replace(',', ''))
-        except ValueError:
+            # Remove commas and convert to integer
+            numeric_string = match.group(1).replace(',', '')
+            return int(numeric_string)
+        except (ValueError, AttributeError):
+            print(f"DEBUG: Failed to convert numeric value: {match.group(1)}")
             pass
     return 0
 
 
 # =====================================================================
-# DATE DETECTION
+# DATE AND TIMESTAMP PROCESSING
 # =====================================================================
 
 def extract_linkedin_activity_timestamp(post_container):
     """
-    Extract precise timestamp from LinkedIn activity URN
+    Extract precise timestamp from LinkedIn activity URN (Uniform Resource Name)
+    
+    LinkedIn embeds precise timestamps in activity URNs throughout the HTML.
+    This provides more accurate timing than relative date strings.
     
     Args:
         post_container: BeautifulSoup element containing the post
         
     Returns:
-        datetime or None: Precise post timestamp if found
+        datetime or None: Precise post timestamp if found, None otherwise
     """
+    print("DEBUG: Attempting to extract precise timestamp from LinkedIn URN")
+    
     try:
-        # Method 1: Look for data-urn attribute
+        # METHOD 1: Look for data-urn attribute in post elements
         urn_element = post_container.select_one("[data-urn*='urn:li:activity:']")
         if urn_element and "data-urn" in urn_element.attrs:
             urn = urn_element["data-urn"]
@@ -153,16 +215,16 @@ def extract_linkedin_activity_timestamp(post_container):
             if activity_id:
                 timestamp = decode_linkedin_timestamp(activity_id)
                 if timestamp:
-                    print(f"DEBUG: Extracted timestamp from data-urn: {timestamp}")
+                    print(f"DEBUG: Successfully extracted timestamp from data-urn: {timestamp}")
                     return timestamp
         
-        # Method 2: Look in data-view-tracking-scope
+        # METHOD 2: Look in data-view-tracking-scope (LinkedIn tracking data)
         tracking_elements = post_container.select("[data-view-tracking-scope]")
         for element in tracking_elements:
             tracking_data = element.get("data-view-tracking-scope", "")
             if "updateUrn" in tracking_data:
                 try:
-                    # Decode HTML entities and parse JSON
+                    # Decode HTML entities and parse as JSON
                     decoded_data = html.unescape(tracking_data)
                     tracking_json = json.loads(decoded_data)
                     
@@ -174,12 +236,13 @@ def extract_linkedin_activity_timestamp(post_container):
                             if activity_id:
                                 timestamp = decode_linkedin_timestamp(activity_id)
                                 if timestamp:
-                                    print(f"DEBUG: Extracted timestamp from tracking data: {timestamp}")
+                                    print(f"DEBUG: Successfully extracted timestamp from tracking data: {timestamp}")
                                     return timestamp
-                except (json.JSONDecodeError, KeyError, IndexError):
+                except (json.JSONDecodeError, KeyError, IndexError) as e:
+                    print(f"DEBUG: Failed to parse tracking data: {e}")
                     continue
         
-        # Method 3: Look for any element containing activity URN
+        # METHOD 3: Look for any element containing activity URN pattern
         all_elements = post_container.find_all(attrs=lambda x: x and any('urn:li:activity:' in str(v) for v in x.values() if v))
         for element in all_elements:
             for attr_value in element.attrs.values():
@@ -188,33 +251,54 @@ def extract_linkedin_activity_timestamp(post_container):
                     if activity_id:
                         timestamp = decode_linkedin_timestamp(activity_id)
                         if timestamp:
-                            print(f"DEBUG: Extracted timestamp from element: {timestamp}")
+                            print(f"DEBUG: Successfully extracted timestamp from element attribute: {timestamp}")
                             return timestamp
     
     except Exception as e:
-        print(f"DEBUG: Error extracting LinkedIn timestamp: {e}")
+        print(f"DEBUG: Error during LinkedIn timestamp extraction: {e}")
     
+    print("DEBUG: No precise timestamp found in LinkedIn URN data")
     return None
 
 def extract_activity_id_from_urn(urn_text):
-    """Extract activity ID from LinkedIn URN"""
+    """
+    Extract numeric activity ID from LinkedIn URN string
+    
+    Args:
+        urn_text (str): URN string containing activity ID
+        
+    Returns:
+        str or None: Extracted activity ID or None if not found
+    """
     match = re.search(r'urn:li:activity:(\d+)', str(urn_text))
-    return match.group(1) if match else None
+    if match:
+        activity_id = match.group(1)
+        print(f"DEBUG: Extracted activity ID: {activity_id}")
+        return activity_id
+    return None
 
 def decode_linkedin_timestamp(activity_id):
     """
-    Decode LinkedIn activity ID to timestamp
+    Decode LinkedIn activity ID to timestamp using reverse engineering
     
-    LinkedIn activity IDs contain embedded timestamps but use a custom format.
-    This is an approximation based on known patterns.
+    LinkedIn activity IDs contain embedded timestamps using custom encoding.
+    This function attempts to decode them using known patterns.
+    
+    Args:
+        activity_id (str): LinkedIn activity ID
+        
+    Returns:
+        datetime or None: Decoded timestamp or None if decoding fails
     """
     try:
-        # Convert to integer
+        print(f"DEBUG: Attempting to decode activity ID: {activity_id}")
+        
+        # Convert activity ID to integer
         id_num = int(activity_id)
         
-        # LinkedIn uses a custom epoch and bit-shifting
-        # Method 1: Extract timestamp bits (first ~41 bits for timestamp)
-        timestamp_part = id_num >> 23  # Right shift to get timestamp part
+        # METHOD 1: Standard LinkedIn timestamp extraction
+        # LinkedIn uses bit-shifting with custom epoch
+        timestamp_part = id_num >> 23  # Right shift to get timestamp bits
         
         # LinkedIn epoch is approximately January 1, 2010
         linkedin_epoch = int(datetime(2010, 1, 1).timestamp() * 1000)  # milliseconds
@@ -222,65 +306,84 @@ def decode_linkedin_timestamp(activity_id):
         # Calculate actual timestamp
         actual_timestamp = linkedin_epoch + timestamp_part
         
-        # Convert to datetime
+        # Convert to datetime object
         post_datetime = datetime.fromtimestamp(actual_timestamp / 1000)
         
-        # Sanity check: should be between 2010 and now
+        # Sanity check: timestamp should be reasonable (between 2010 and now)
         now = datetime.now()
         earliest = datetime(2010, 1, 1)
         
         if earliest <= post_datetime <= now:
+            print(f"DEBUG: Successfully decoded timestamp: {post_datetime}")
             return post_datetime
         
-        # Method 2: Try different bit shifting if Method 1 fails
+        # METHOD 2: Try alternative bit shifting values if Method 1 fails
+        print("DEBUG: Method 1 failed, trying alternative bit shifts")
         for shift in [22, 24, 25]:
             timestamp_part = id_num >> shift
             actual_timestamp = linkedin_epoch + timestamp_part
             try:
                 post_datetime = datetime.fromtimestamp(actual_timestamp / 1000)
                 if earliest <= post_datetime <= now:
+                    print(f"DEBUG: Successfully decoded with shift {shift}: {post_datetime}")
                     return post_datetime
             except (ValueError, OSError, OverflowError):
                 continue
     
-    except (ValueError, OSError, OverflowError):
-        pass
+    except (ValueError, OSError, OverflowError) as e:
+        print(f"DEBUG: Failed to decode activity ID {activity_id}: {e}")
     
+    print(f"DEBUG: Could not decode activity ID: {activity_id}")
     return None
 
 
 def get_date(date_text, post_container=None):
     """
-    Convert LinkedIn relative date to full timestamp format with better precision
+    Convert LinkedIn relative date strings to full timestamp format
+    
+    This function handles LinkedIn's relative date formats like:
+    - "15h" (15 hours ago)
+    - "3d" (3 days ago) 
+    - "2w" (2 weeks ago)
+    - "5mo" (5 months ago)
+    - "1y" (1 year ago)
     
     Args:
-        date_text (str): LinkedIn's relative date format like "15h", "3d", "2w", "5mo", "1y"
-        post_container: BeautifulSoup element (for precise timestamp extraction)
+        date_text (str): LinkedIn relative date format
+        post_container: BeautifulSoup element for precise timestamp extraction
         
     Returns:
         str: Timestamp in 'YYYY-MM-DD HH:MM:SS' format
     """
     import random
     
-    # First, try to get precise timestamp from LinkedIn URN
+    print(f"DEBUG: Converting relative date: {date_text}")
+    
+    # STEP 1: Try to get precise timestamp from LinkedIn URN first
     if post_container:
         precise_timestamp = extract_linkedin_activity_timestamp(post_container)
         if precise_timestamp:
-            return precise_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            formatted_timestamp = precise_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+            print(f"DEBUG: Using precise URN timestamp: {formatted_timestamp}")
+            return formatted_timestamp
     
-    # Fallback to relative time parsing with improvements
+    # STEP 2: Fallback to relative time parsing with randomization
+    print("DEBUG: Using relative time parsing with randomization")
     today = datetime.now()
     
-    # Parse relative date formats with HOURS support
+    # Parse different relative date formats
     if 'h' in date_text:
-        # Handle "Xh" format (e.g., "15h", "3h")
+        # Handle hours format (e.g., "15h", "3h")
         hours = int(re.search(r'(\d+)', date_text).group(1))
-        # Add small randomization to break clustering (±30 minutes)
+        # Add randomization to prevent clustering (±30 minutes)
         random_minutes = random.randint(-30, 30)
         date = today - timedelta(hours=hours, minutes=random_minutes)
+        print(f"DEBUG: Parsed hours: {hours}h with {random_minutes}min randomization")
+        
     elif 'mo' in date_text:
-        # Handle "Xmo" format (e.g., "4mo")
+        # Handle months format (e.g., "4mo")
         months = int(re.search(r'(\d+)', date_text).group(1))
+        
         # Calculate correct year and month
         new_month = today.month - months
         new_year = today.year
@@ -291,28 +394,35 @@ def get_date(date_text, post_container=None):
             new_year -= 1
             
         date = today.replace(year=new_year, month=new_month)
+        
         # Add randomization within the month (±15 days)
         random_days = random.randint(-15, 15)
         random_hours = random.randint(0, 23)
         random_minutes = random.randint(0, 59)
         date = date + timedelta(days=random_days, hours=random_hours, minutes=random_minutes)
+        print(f"DEBUG: Parsed months: {months}mo with randomization")
+        
     elif 'w' in date_text:
-        # Handle "Xw" format
+        # Handle weeks format (e.g., "2w")
         weeks = int(re.search(r'(\d+)', date_text).group(1))
         # Add randomization within the week (±3 days, random time)
         random_days = random.randint(-3, 3)
         random_hours = random.randint(0, 23)
         random_minutes = random.randint(0, 59)
         date = today - timedelta(weeks=weeks, days=random_days, hours=random_hours, minutes=random_minutes)
+        print(f"DEBUG: Parsed weeks: {weeks}w with randomization")
+        
     elif 'd' in date_text:
-        # Handle "Xd" format (e.g., "3d")
+        # Handle days format (e.g., "3d")
         days = int(re.search(r'(\d+)', date_text).group(1))
         # Add randomization within the day (±12 hours)
         random_hours = random.randint(-12, 12)
         random_minutes = random.randint(0, 59)
         date = today - timedelta(days=days, hours=random_hours, minutes=random_minutes)
+        print(f"DEBUG: Parsed days: {days}d with randomization")
+        
     elif 'y' in date_text:
-        # Handle "Xy" format (e.g., "1y")
+        # Handle years format (e.g., "1y")
         years = int(re.search(r'(\d+)', date_text).group(1))
         date = today.replace(year=today.year - years)
         # Add randomization within the year (±60 days, random time)
@@ -320,55 +430,67 @@ def get_date(date_text, post_container=None):
         random_hours = random.randint(0, 23)
         random_minutes = random.randint(0, 59)
         date = date + timedelta(days=random_days, hours=random_hours, minutes=random_minutes)
+        print(f"DEBUG: Parsed years: {years}y with randomization")
+        
     else:
+        # Unknown format - use current time
+        print(f"DEBUG: Unknown date format: {date_text}, using current time")
         date = today
     
-    # Format as YYYY-MM-DD HH:MM:SS
-    return date.strftime('%Y-%m-%d %H:%M:%S')
+    # Format as standard timestamp string
+    formatted_date = date.strftime('%Y-%m-%d %H:%M:%S')
+    print(f"DEBUG: Final formatted date: {formatted_date}")
+    return formatted_date
 
 
 # =====================================================================
-# POST TYPE DETECTION
+# POST TYPE DETECTION AND CLASSIFICATION
 # =====================================================================
 
 def is_repost(post_container):
     """
-    Enhanced detection for all types of LinkedIn reposts
+    Advanced detection for all types of LinkedIn reposts
     
-    There are two main types of reposts:
-    1. Standard reposts with "reposted this" text (like Image 1/Post_8)
-    2. Reposts with comments where the original post appears as a nested card (like Image 2/Posts 1-4, 7)
+    LinkedIn has multiple repost patterns:
+    1. Standard reposts with "reposted this" text
+    2. Reposts with comments where original post appears as nested card
+    3. Direct reposts with nested content structure
     
     Args:
         post_container: BeautifulSoup element containing the post
         
     Returns:
-        bool: True if the post is a repost (any type), False otherwise
+        bool: True if the post is any type of repost, False for original posts
     """
-    # APPROACH 1: Look for nested content wrapper (most reliable indicator for reposts with comments)
-    # This is the "card within a card" structure seen in Image 2
+    print("DEBUG: Analyzing post type (repost vs original)")
+    
+    # METHOD 1: Look for nested content wrapper (most reliable for reposts with comments)
+    # This detects the "card within a card" structure
     content_wrapper = post_container.select_one(".MxyAgNzXcrHwRVnhLpYwOXnvQMJVwVlM")
     if content_wrapper:
-        # If this wrapper has an actor container inside it, it's a repost with comment
+        # If wrapper contains an actor container, it's a repost with comment
         if content_wrapper.select_one(".update-components-actor__container"):
+            print("DEBUG: Detected repost via nested content wrapper")
             return True
     
-    # APPROACH 2: Check for explicit "reposted this" text (for standard reposts like in Image 1)
+    # METHOD 2: Check for explicit "reposted this" text (standard reposts)
     header_texts = post_container.select(".update-components-header__text-view, .update-components-actor__title")
     for text_elem in header_texts:
         if text_elem and "reposted this" in text_elem.get_text():
+            print("DEBUG: Detected repost via 'reposted this' text")
             return True
     
-    # APPROACH 3: Check for multiple actor containers at different parent levels
-    # One for the reposter, one for the original author
+    # METHOD 3: Check for multiple actor containers at different levels
+    # One for reposter, one for original author
     actor_containers = post_container.select(".update-components-actor__container")
     if len(actor_containers) > 1:
-        # Make sure they're in different parents (not just multiple mentions)
+        # Ensure containers have different parent elements
         parents = [container.parent for container in actor_containers]
-        if len(set(parents)) > 1:  # If containers have different parents
+        if len(set(parents)) > 1:
+            print("DEBUG: Detected repost via multiple actor containers")
             return True
     
-    # APPROACH 4: Check for reshared content markers
+    # METHOD 4: Check for reshared content markers in CSS classes
     reshare_markers = [
         ".update-components-mini-update-v2__reshared-content",
         ".update-components-mini-update-v2__reshared-content--with-divider",
@@ -379,41 +501,48 @@ def is_repost(post_container):
     
     for marker in reshare_markers:
         if post_container.select_one(marker):
+            print(f"DEBUG: Detected repost via CSS marker: {marker}")
             return True
     
-    # APPROACH 5: Check for nested content in PT3 container (common in reposts with comments)
+    # METHOD 5: Check for nested content in PT3 container
     pt3_container = post_container.select_one(".pt3")
     if pt3_container and pt3_container.select_one(".update-components-actor__container"):
+        print("DEBUG: Detected repost via PT3 container structure")
         return True
     
-    # If none of the repost indicators were found, it's an original post
+    # If no repost indicators found, classify as original post
+    print("DEBUG: No repost indicators found - classified as original post")
     return False
 
 # =====================================================================
-# MEDIA DETECTION FUNCTIONS
+# MEDIA CONTENT DETECTION AND ANALYSIS
 # =====================================================================
 
 def media_is_video(post_container):
     """
-    Check if the post contains video content
+    Detect if the post contains video content by checking video-specific elements
     
     Args:
         post_container: BeautifulSoup element containing the post
         
     Returns:
-        bool: True if the post contains video, False otherwise
+        bool: True if post contains video content, False otherwise
     """
-    # Look for video player elements
+    print("DEBUG: Checking for video content")
+    
+    # METHOD 1: Look for LinkedIn video player elements
     video_player = post_container.select_one(".update-components-linkedin-video")
     if video_player:
+        print("DEBUG: Video detected via LinkedIn video player element")
         return True
         
-    # Alternative check for video content
+    # METHOD 2: Check for video.js player elements
     video_js = post_container.select_one(".video-js")
     if video_js:
+        print("DEBUG: Video detected via video.js player")
         return True
     
-    # Look for specific video-related classes
+    # METHOD 3: Look for specific video-related CSS classes
     video_classes = [
         ".media-player",
         ".vjs-tech",
@@ -422,42 +551,50 @@ def media_is_video(post_container):
     
     for class_name in video_classes:
         if post_container.select_one(class_name):
+            print(f"DEBUG: Video detected via CSS class: {class_name}")
             return True
     
+    print("DEBUG: No video content detected")
     return False
 
 def media_is_carousel(post_container):
     """
-    Check if the post contains a document carousel
+    Detect if the post contains a document carousel (PDF, slides, etc.)
     
     Args:
         post_container: BeautifulSoup element containing the post
         
     Returns:
-        bool: True if post contains a document carousel, False otherwise
+        bool: True if post contains document carousel, False otherwise
     """
-    # Check for the document-s-container class
+    print("DEBUG: Checking for document carousel content")
+    
+    # METHOD 1: Check for document container class
     if post_container.select_one(".document-s-container"):
+        print("DEBUG: Document carousel detected via document-s-container")
         return True
     
-    # Check for the document container with specific class
+    # METHOD 2: Check for document container with specific class
     if post_container.select_one(".update-components-document__container"):
+        print("DEBUG: Document carousel detected via update-components-document__container")
         return True
     
-    # Check for document iframe
+    # METHOD 3: Check for document iframe
     iframe = post_container.select_one("iframe[title*='Document player']")
     if iframe:
+        print("DEBUG: Document carousel detected via document player iframe")
         return True
     
+    print("DEBUG: No document carousel detected")
     return False
 
 # =====================================================================
-# CONTENT EXTRACTION FUNCTIONS
+# CONTENT EXTRACTION AND PROCESSING
 # =====================================================================
 
 def get_posts(soup):
     """
-    Find and extract all post containers from the HTML
+    Find and extract all post containers from the parsed HTML
     
     Args:
         soup: BeautifulSoup object containing the parsed HTML
@@ -465,51 +602,81 @@ def get_posts(soup):
     Returns:
         list: List of post container elements, limited to MAX_POSTS
     """
-    # Find all post containers
+    print("DEBUG: Extracting post containers from HTML")
+    
+    # Find all LinkedIn post containers
     post_containers = soup.find_all("div", class_="feed-shared-update-v2")
-    return post_containers[:MAX_POSTS]
+    
+    print(f"DEBUG: Found {len(post_containers)} total posts in HTML")
+    
+    # Limit to maximum posts for processing
+    limited_posts = post_containers[:MAX_POSTS]
+    print(f"DEBUG: Processing {len(limited_posts)} posts (limited by MAX_POSTS={MAX_POSTS})")
+    
+    return limited_posts
 
 def get_post_description(post_container):
-    # FOR REPOSTS: Look for content in PT3 container FIRST
+    """
+    Extract the main post content/description with special handling for reposts
+    
+    For reposts, this should extract the ORIGINAL post content, not reposter comments.
+    Uses multiple extraction methods with proper fallback chain.
+    
+    Args:
+        post_container: BeautifulSoup element containing the post
+        
+    Returns:
+        str: Main post content/description
+    """
+    print("DEBUG: Extracting post description/content")
+    
+    # METHOD 1: For reposts - Look for content in PT3 container FIRST
     pt3_container = post_container.select_one(".pt3")
     if pt3_container:
-        # Look for description within PT3
+        print("DEBUG: Found PT3 container, checking for nested content")
         pt3_description = pt3_container.select_one(".feed-shared-inline-show-more-text")
         if pt3_description:
             content_span = pt3_description.select_one(".update-components-text .break-words span[dir='ltr']")
             if content_span:
                 content = clean(content_span.get_text())
                 content = content.replace("hashtag#", "#")
+                print(f"DEBUG: Extracted content from PT3 container: {content[:80]}...")
                 return content
     
-    # If we have multiple descriptions, try the LAST one (not the first)
-    # The first is likely the reposter comment, the last is the original content
+    # METHOD 2: Handle multiple descriptions (reposts with comments)
+    # For reposts, the LAST description is usually the original content
     all_descriptions = post_container.select(".feed-shared-inline-show-more-text")
     if len(all_descriptions) >= 2:
-        # Try descriptions from last to first (skip the reposter comment)
-        for desc in reversed(all_descriptions):
-            # Skip if this is the same one we might have used for reposter comment
+        print(f"DEBUG: Found {len(all_descriptions)} description containers")
+        
+        # Try descriptions from last to first (skip reposter comment)
+        for i, desc in enumerate(reversed(all_descriptions)):
+            # Focus on PT3 descriptions for original content
             if not desc.find_parent(".pt3"):
-                continue  # Skip non-PT3 descriptions for original content
+                continue
             
             content_span = desc.select_one(".update-components-text .break-words span[dir='ltr']")
             if content_span:
                 content = clean(content_span.get_text())
                 content = content.replace("hashtag#", "#")
+                print(f"DEBUG: Extracted content from description {len(all_descriptions)-i}: {content[:80]}...")
                 return content
     
-    # Fallback: Look for content in nested update content wrapper
+    # METHOD 3: Look for content in nested update content wrapper
     content_wrapper = post_container.select_one(".feed-shared-update-v2__update-content-wrapper")
     if content_wrapper:
+        print("DEBUG: Checking nested update content wrapper")
         nested_description = content_wrapper.select_one(".feed-shared-inline-show-more-text")
         if nested_description:
             content_span = nested_description.select_one(".update-components-text .break-words span[dir='ltr']")
             if content_span:
                 content = clean(content_span.get_text())
                 content = content.replace("hashtag#", "#")
+                print(f"DEBUG: Extracted content from nested wrapper: {content[:80]}...")
                 return content
     
-    # Final fallback: Standard approach (for regular posts)
+    # METHOD 4: Standard approach for regular posts (final fallback)
+    print("DEBUG: Using standard description extraction method")
     description_container = post_container.select_one(".feed-shared-inline-show-more-text")
     if description_container:
         content_span = description_container.select_one(".update-components-text .break-words span[dir='ltr']")
@@ -517,16 +684,20 @@ def get_post_description(post_container):
         if content_span:
             content = clean(content_span.get_text())
             content = content.replace("hashtag#", "#")
+            print(f"DEBUG: Extracted content from standard method: {content[:80]}...")
             return content
         else:
             content = clean(description_container.get_text())
             content = content.replace("hashtag#", "#")
             
+            # Add "more" indicator if truncated content detected
             if "…more" not in content and description_container.select_one(".feed-shared-inline-show-more-text__see-more-less-toggle"):
                 content += " …more"
                 
+            print(f"DEBUG: Extracted fallback content: {content[:80]}...")
             return content
     
+    print("DEBUG: No post description found")
     return ""
 
 def get_reposter_comment(post_container):

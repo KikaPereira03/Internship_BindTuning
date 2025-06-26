@@ -130,13 +130,13 @@ def main():
     
     # Final summary
     print("\n" + "=" * 50)
-    print("🏆 BATCH PROCESSING COMPLETE!")
+    print("BATCH PROCESSING COMPLETE!")
     print(f"Successful: {successful}")
     print(f"Failed: {failed}")
     print(f"Total: {len(html_files)}")
     
     if failed > 0:
-        print(f"\n⚠️  {failed} files failed to process. Check the error messages above.")
+        print(f"\n  {failed} files failed to process. Check the error messages above.")
     
     if successful > 0:
         print(f"\n{successful} profiles processed successfully!")
